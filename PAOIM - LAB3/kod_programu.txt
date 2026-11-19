@@ -1,0 +1,3757 @@
+PAOIM Lab 3 - caly kod programu i testy JUnit
+Kacper Marciniec, GR4
+Kazdy fragment jest podpisany sciezka pliku, z ktorego pochodzi.
+Najpierw klasy programu (src\main\java), potem testy jednostkowe i TestSuite (src\test\java).
+
+================================================================================
+PLIK: src\main\java\lab3\Main.java
+================================================================================
+package lab3;
+
+import lab3.data.DataGenerator;
+import lab3.exception.StoreException;
+import lab3.facade.StoreFacade;
+import lab3.ui.ApplicationFrame;
+
+import javax.swing.JOptionPane;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+import javax.swing.UnsupportedLookAndFeelException;
+
+/**
+ * PAOIM Lab 3 — interfejs graficzny sieci sklepów z laptopami.
+ * Kacper Marciniec, GR4
+ */
+public class Main {
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+                } catch (ReflectiveOperationException | UnsupportedLookAndFeelException ex) {
+                    // zostaje domyślny wygląd Swinga
+                }
+                try {
+                    StoreFacade facade = new StoreFacade(DataGenerator.getInstance().getManager());
+                    ApplicationFrame frame = new ApplicationFrame(facade);
+                    frame.setVisible(true);
+                } catch (StoreException ex) {
+                    JOptionPane.showMessageDialog(null, ex.getMessage(), "Błąd", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\exception\StoreException.java
+================================================================================
+package lab3.exception;
+
+/**
+ * Bazowy wyjątek sprawdzany warstwy modelu sklepu.
+ * Błędy biznesowe nie są zgłaszane jako {@link RuntimeException}.
+ */
+public class StoreException extends Exception {
+    public StoreException(String message) {
+        super(message);
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\exception\BranchFullException.java
+================================================================================
+package lab3.exception;
+
+/** Oddział nie przyjmie kolejnego laptopa, bo osiągnięto pojemność. */
+public class BranchFullException extends StoreException {
+    public BranchFullException(String message) {
+        super(message);
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\exception\LaptopNotFoundException.java
+================================================================================
+package lab3.exception;
+
+/** W oddziale nie ma laptopa o wskazanej tożsamości (model, marka, rok). */
+public class LaptopNotFoundException extends StoreException {
+    public LaptopNotFoundException(String message) {
+        super(message);
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\exception\DuplicateLaptopException.java
+================================================================================
+package lab3.exception;
+
+/** W oddziale jest już laptop o tym samym modelu, marce i roku produkcji. */
+public class DuplicateLaptopException extends StoreException {
+    public DuplicateLaptopException(String message) {
+        super(message);
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\exception\InvalidPriceException.java
+================================================================================
+package lab3.exception;
+
+/** Cena jest ujemna albo nie jest skończoną liczbą. */
+public class InvalidPriceException extends StoreException {
+    public InvalidPriceException(String message) {
+        super(message);
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\exception\InvalidDataException.java
+================================================================================
+package lab3.exception;
+
+/** Dane wejściowe są puste albo poza dozwolonym zakresem. */
+public class InvalidDataException extends StoreException {
+    public InvalidDataException(String message) {
+        super(message);
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\exception\BranchNotFoundException.java
+================================================================================
+package lab3.exception;
+
+/** W sieci nie ma oddziału o podanej nazwie. */
+public class BranchNotFoundException extends StoreException {
+    public BranchNotFoundException(String message) {
+        super(message);
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\exception\DuplicateBranchException.java
+================================================================================
+package lab3.exception;
+
+/** Oddział o tej nazwie jest już w sieci. */
+public class DuplicateBranchException extends StoreException {
+    public DuplicateBranchException(String message) {
+        super(message);
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\model\LaptopCondition.java
+================================================================================
+package lab3.model;
+
+/**
+ * Stan laptopa przyjętego do sieci sklepów.
+ * {@code toString()} zwraca polską nazwę używaną w tabeli i komunikatach.
+ */
+public enum LaptopCondition {
+    WORKING {
+        @Override
+        public String toString() {
+            return "Sprawny";
+        }
+    },
+    DAMAGED {
+        @Override
+        public String toString() {
+            return "Uszkodzony";
+        }
+    },
+    IN_REPAIR {
+        @Override
+        public String toString() {
+            return "W naprawie";
+        }
+    },
+    IN_TESTING {
+        @Override
+        public String toString() {
+            return "W trakcie testów";
+        }
+    },
+    RESERVED {
+        @Override
+        public String toString() {
+            return "Zarezerwowany";
+        }
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\model\Laptop.java
+================================================================================
+package lab3.model;
+
+import lab3.exception.InvalidDataException;
+import lab3.exception.InvalidPriceException;
+
+import java.time.Year;
+import java.util.Locale;
+import java.util.Objects;
+
+/**
+ * Laptop przyjęty do odsprzedaży.
+ * <p>
+ * Porządek naturalny ({@link Comparable}) i równość biznesowa obejmują model, markę i wiek
+ * (wynikający z roku produkcji). Dwa egzemplarze o tym samym modelu, marce i roku są traktowane
+ * jako ten sam laptop przy dodawaniu do oddziału.
+ */
+public class Laptop implements Comparable<Laptop> {
+    private static int nextSerial = 1;
+
+    private final String model;
+    private final String brand;
+    private LaptopCondition condition;
+    private int year;
+    private double price;
+    private final int ramGb;
+    private final String processor;
+    private final int batteryHealth;
+    private final String serialNumber;
+
+    /**
+     * Klucz używany wyłącznie przy wyszukiwaniu binarnym po modelu.
+     * Nie przechodzi walidacji pełnego egzemplarza.
+     */
+    private Laptop(String model) {
+        this.model = model;
+        this.brand = "";
+        this.condition = LaptopCondition.WORKING;
+        this.year = Year.now().getValue();
+        this.price = 0;
+        this.ramGb = 0;
+        this.processor = "";
+        this.batteryHealth = 0;
+        this.serialNumber = "";
+    }
+
+    public Laptop(String model, String brand, LaptopCondition condition, int year, double price)
+            throws InvalidPriceException, InvalidDataException {
+        this(model, brand, condition, year, price, 8, "niepodany", 100, nextSerial());
+    }
+
+    public Laptop(String model, String brand, LaptopCondition condition, int year, double price,
+                  int ramGb, String processor, int batteryHealth)
+            throws InvalidPriceException, InvalidDataException {
+        this(model, brand, condition, year, price, ramGb, processor, batteryHealth, nextSerial());
+    }
+
+    public Laptop(String model, String brand, LaptopCondition condition, int year, double price,
+                  int ramGb, String processor, int batteryHealth, String serialNumber)
+            throws InvalidPriceException, InvalidDataException {
+        this.model = requireText(model, "Model");
+        this.brand = requireText(brand, "Marka");
+        if (condition == null) {
+            throw new InvalidDataException("Stan laptopa jest wymagany.");
+        }
+        checkYear(year);
+        validatePrice(price);
+        if (ramGb <= 0) {
+            throw new InvalidDataException("Pamięć RAM musi być dodatnia.");
+        }
+        this.processor = requireText(processor, "Procesor");
+        if (batteryHealth < 0 || batteryHealth > 100) {
+            throw new InvalidDataException("Kondycja baterii musi być w zakresie 0-100%.");
+        }
+        this.serialNumber = requireText(serialNumber, "Numer seryjny");
+        this.condition = condition;
+        this.year = year;
+        this.price = price;
+        this.ramGb = ramGb;
+        this.batteryHealth = batteryHealth;
+    }
+
+    static Laptop modelKey(String model) {
+        return new Laptop(model);
+    }
+
+    public void print() {
+        System.out.println("Laptop: " + brand + " " + model);
+        System.out.println("  Numer seryjny: " + serialNumber);
+        System.out.println("  Stan: " + condition);
+        System.out.println("  Rok produkcji: " + year + " (wiek: " + age() + " lat)");
+        System.out.printf("  Cena: %.2f zł%n", price);
+        System.out.println("  RAM: " + ramGb + " GB");
+        System.out.println("  Procesor: " + processor);
+        System.out.println("  Kondycja baterii: " + batteryHealth + "%");
+    }
+
+    /**
+     * Porównanie według modelu, marki, a następnie wieku (starszy laptop jest „większy”).
+     */
+    @Override
+    public int compareTo(Laptop other) {
+        int byModel = model.compareTo(other.model);
+        if (byModel != 0) {
+            return byModel;
+        }
+        int byBrand = brand.compareTo(other.brand);
+        if (byBrand != 0) {
+            return byBrand;
+        }
+        return Integer.compare(age(), other.age());
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (!(obj instanceof Laptop)) {
+            return false;
+        }
+        Laptop other = (Laptop) obj;
+        return year == other.year && model.equals(other.model) && brand.equals(other.brand);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(model, brand, year);
+    }
+
+    @Override
+    public String toString() {
+        return String.format("%s %s, rok %d (wiek %d), %s, %.2f zł, nr %s",
+                brand, model, year, age(), condition, price, serialNumber);
+    }
+
+    public int age() {
+        return Year.now().getValue() - year;
+    }
+
+    public String getModel() {
+        return model;
+    }
+
+    public String getBrand() {
+        return brand;
+    }
+
+    public LaptopCondition getCondition() {
+        return condition;
+    }
+
+    public int getYear() {
+        return year;
+    }
+
+    public double getPrice() {
+        return price;
+    }
+
+    public String getPriceLabel() {
+        return String.format(Locale.US, "%.2f zł", price);
+    }
+
+    public int getRamGb() {
+        return ramGb;
+    }
+
+    public String getProcessor() {
+        return processor;
+    }
+
+    public int getBatteryHealth() {
+        return batteryHealth;
+    }
+
+    public String getSerialNumber() {
+        return serialNumber;
+    }
+
+    public void setCondition(LaptopCondition condition) throws InvalidDataException {
+        if (condition == null) {
+            throw new InvalidDataException("Stan laptopa jest wymagany.");
+        }
+        this.condition = condition;
+    }
+
+    public void setPrice(double price) throws InvalidPriceException {
+        validatePrice(price);
+        this.price = price;
+    }
+
+    void setYear(int year) throws InvalidDataException {
+        checkYear(year);
+        this.year = year;
+    }
+
+    static void checkYear(int year) throws InvalidDataException {
+        int current = Year.now().getValue();
+        if (year < 1980 || year > current) {
+            throw new InvalidDataException(
+                    "Nieprawidłowy rok produkcji: " + year + " (dozwolone 1980-" + current + ").");
+        }
+    }
+
+    private static void validatePrice(double price) throws InvalidPriceException {
+        if (Double.isNaN(price) || Double.isInfinite(price)) {
+            throw new InvalidPriceException("Cena ma nieprawidłową wartość.");
+        }
+        if (price < 0) {
+            throw new InvalidPriceException("Cena nie może być ujemna.");
+        }
+    }
+
+    private static String requireText(String value, String field) throws InvalidDataException {
+        if (value == null || value.trim().isEmpty()) {
+            throw new InvalidDataException(field + " nie może być pusty.");
+        }
+        return value.trim();
+    }
+
+    private static synchronized String nextSerial() {
+        return String.format("SN-%05d", nextSerial++);
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\model\Branch.java
+================================================================================
+package lab3.model;
+
+import lab3.exception.BranchFullException;
+import lab3.exception.DuplicateLaptopException;
+import lab3.exception.InvalidDataException;
+import lab3.exception.InvalidPriceException;
+import lab3.exception.LaptopNotFoundException;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+
+/**
+ * Oddział (punkt sprzedaży) przechowujący laptopy do odsprzedaży.
+ * Lista jest zadeklarowana jako {@link List}, a konkretną implementacją jest {@link ArrayList}:
+ * oddziały są niewielkie, często czytamy je po indeksie i sortujemy kopie.
+ */
+public class Branch {
+    private final String branchName;
+    private final List<Laptop> laptopList;
+    private final int maxCapacity;
+
+    public Branch(String branchName, int maxCapacity) throws InvalidDataException {
+        if (branchName == null || branchName.trim().isEmpty()) {
+            throw new InvalidDataException("Nazwa oddziału jest wymagana.");
+        }
+        if (maxCapacity <= 0) {
+            throw new InvalidDataException("Pojemność oddziału musi być dodatnia.");
+        }
+        this.branchName = branchName.trim();
+        this.maxCapacity = maxCapacity;
+        this.laptopList = new ArrayList<>();
+    }
+
+    /**
+     * Dodaje laptop. Ten sam model, marka i rok są duplikatem.
+     * Przekroczenie pojemności zgłasza {@link BranchFullException}.
+     */
+    public void addLaptop(Laptop laptop)
+            throws DuplicateLaptopException, BranchFullException, InvalidDataException {
+        if (laptop == null) {
+            throw new InvalidDataException("Nie można dodać laptopa do oddziału \"" + branchName + "\": brak obiektu.");
+        }
+        if (laptopList.contains(laptop)) {
+            throw new DuplicateLaptopException("Laptop już istnieje w oddziale \"" + branchName
+                    + "\" (ten sam model, marka i wiek): " + laptop.getBrand() + " " + laptop.getModel()
+                    + ", rok " + laptop.getYear() + ".");
+        }
+        if (laptopList.size() >= maxCapacity) {
+            throw new BranchFullException("Oddział \"" + branchName + "\" jest pełny ("
+                    + laptopList.size() + "/" + maxCapacity + "). Nie dodano: "
+                    + laptop.getBrand() + " " + laptop.getModel() + ".");
+        }
+        laptopList.add(laptop);
+    }
+
+    /** Usuwa laptop z oddziału (utylizacja albo zwrot do dostawcy). */
+    public Laptop removeLaptop(Laptop laptop) throws LaptopNotFoundException, InvalidDataException {
+        Laptop removed = take(laptop);
+        if (removed == null) {
+            throw new LaptopNotFoundException(missingLaptopMessage());
+        }
+        return removed;
+    }
+
+    /** Usuwa laptop w wyniku sprzedaży. */
+    public Laptop sellLaptop(Laptop laptop) throws LaptopNotFoundException, InvalidDataException {
+        Laptop sold = take(laptop);
+        if (sold == null) {
+            throw new LaptopNotFoundException("Nie sprzedano — w oddziale \"" + branchName + "\" nie ma takiego laptopa.");
+        }
+        return sold;
+    }
+
+    public void changeCondition(Laptop laptop, LaptopCondition condition)
+            throws LaptopNotFoundException, InvalidDataException {
+        if (condition == null) {
+            throw new InvalidDataException("Nie zmieniono stanu: brak nowej wartości.");
+        }
+        Laptop stored = find(laptop);
+        if (stored == null) {
+            throw new LaptopNotFoundException(missingLaptopMessage());
+        }
+        stored.setCondition(condition);
+    }
+
+    public void changePrice(Laptop laptop, double price)
+            throws LaptopNotFoundException, InvalidPriceException, InvalidDataException {
+        Laptop stored = find(laptop);
+        if (stored == null) {
+            throw new LaptopNotFoundException(missingLaptopMessage());
+        }
+        stored.setPrice(price);
+    }
+
+    public void changeYear(Laptop laptop, int year)
+            throws LaptopNotFoundException, InvalidDataException, DuplicateLaptopException {
+        int index = indexOf(laptop);
+        if (index < 0) {
+            throw new LaptopNotFoundException(missingLaptopMessage());
+        }
+        Laptop stored = laptopList.get(index);
+        if (stored.getYear() == year) {
+            return;
+        }
+        Laptop.checkYear(year);
+        for (int i = 0; i < laptopList.size(); i++) {
+            if (i == index) {
+                continue;
+            }
+            Laptop other = laptopList.get(i);
+            if (other.getModel().equals(stored.getModel())
+                    && other.getBrand().equals(stored.getBrand())
+                    && other.getYear() == year) {
+                throw new DuplicateLaptopException("Nie zmieniono roku " + stored.getBrand() + " " + stored.getModel()
+                        + ": w oddziale \"" + branchName + "\" jest już taki model, marka i wiek (rok " + year + ").");
+            }
+        }
+        stored.setYear(year);
+    }
+
+    public int countByCondition(LaptopCondition condition) {
+        if (condition == null) {
+            return 0;
+        }
+        int count = 0;
+        for (Laptop laptop : laptopList) {
+            if (laptop.getCondition() == condition) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** Nowa lista posortowana alfabetycznie po modelu. Kolejność w oddziale zostaje bez zmian. */
+    public List<Laptop> sortByName() {
+        List<Laptop> sorted = new ArrayList<>(laptopList);
+        Collections.sort(sorted, Comparator.comparing(Laptop::getModel));
+        return sorted;
+    }
+
+    /** Nowa lista posortowana po cenie rosnąco. */
+    public List<Laptop> sortByPrice() {
+        List<Laptop> sorted = new ArrayList<>(laptopList);
+        Collections.sort(sorted, new Comparator<Laptop>() {
+            @Override
+            public int compare(Laptop o1, Laptop o2) {
+                return Double.compare(o1.getPrice(), o2.getPrice());
+            }
+        });
+        return sorted;
+    }
+
+    /**
+     * Zwraca laptop o podanym modelu albo {@code null}.
+     * Lista jest sortowana komparatorem po modelu, a wynik znajduje {@code Collections.binarySearch}.
+     */
+    public Laptop search(String model) {
+        if (model == null || laptopList.isEmpty()) {
+            return null;
+        }
+        List<Laptop> sorted = new ArrayList<>(laptopList);
+        Comparator<Laptop> byModel = Comparator.comparing(Laptop::getModel);
+        Collections.sort(sorted, byModel);
+        int index = Collections.binarySearch(sorted, Laptop.modelKey(model), byModel);
+        if (index < 0) {
+            return null;
+        }
+        return sorted.get(index);
+    }
+
+    /** Wszystkie laptopy, których model albo marka zawiera podany fragment ({@code String.contains}). */
+    public List<Laptop> searchPartial(String text) {
+        List<Laptop> found = new ArrayList<>();
+        if (text == null || text.isEmpty()) {
+            return found;
+        }
+        for (Laptop laptop : laptopList) {
+            if (laptop.getModel().contains(text) || laptop.getBrand().contains(text)) {
+                found.add(laptop);
+            }
+        }
+        return found;
+    }
+
+    public void summary() {
+        System.out.println("--- Oddział: " + branchName + " (" + laptopList.size() + "/" + maxCapacity + ") ---");
+        if (laptopList.isEmpty()) {
+            System.out.println("Brak laptopów.");
+            return;
+        }
+        int index = 1;
+        for (Laptop laptop : laptopList) {
+            System.out.println(index + ". " + laptop);
+            index++;
+        }
+        System.out.printf("Łączna wartość: %.2f zł%n", totalValue());
+    }
+
+    /** Najdroższy laptop w oddziale. Pusta półka zwraca {@code null}. */
+    public Laptop max() {
+        if (laptopList.isEmpty()) {
+            return null;
+        }
+        return Collections.max(laptopList, new Comparator<Laptop>() {
+            @Override
+            public int compare(Laptop o1, Laptop o2) {
+                return Double.compare(o1.getPrice(), o2.getPrice());
+            }
+        });
+    }
+
+    public double totalValue() {
+        double sum = 0;
+        for (Laptop laptop : laptopList) {
+            sum += laptop.getPrice();
+        }
+        return sum;
+    }
+
+    public boolean contains(Laptop laptop) {
+        return laptop != null && laptopList.contains(laptop);
+    }
+
+    public boolean isEmpty() {
+        return laptopList.isEmpty();
+    }
+
+    public boolean isFull() {
+        return laptopList.size() >= maxCapacity;
+    }
+
+    public int size() {
+        return laptopList.size();
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public int getMaxCapacity() {
+        return maxCapacity;
+    }
+
+    public int getLaptopCount() {
+        return laptopList.size();
+    }
+
+    public double fillRatio() {
+        return (double) laptopList.size() / maxCapacity;
+    }
+
+    public String getFillLabel() {
+        return String.format(Locale.US, "%.1f%%", fillRatio() * 100.0);
+    }
+
+    public List<Laptop> getLaptops() {
+        return Collections.unmodifiableList(laptopList);
+    }
+
+    /** Wyjmuje egzemplarz z półki i zwraca obiekt przechowywany w oddziale. */
+    Laptop take(Laptop laptop) throws InvalidDataException {
+        int index = indexOf(laptop);
+        if (index < 0) {
+            return null;
+        }
+        return laptopList.remove(index);
+    }
+
+    /** Wkłada laptop już sprawdzony przez wywołującego (używane przy przeniesieniu). */
+    void attach(Laptop laptop) {
+        laptopList.add(laptop);
+    }
+
+    private Laptop find(Laptop laptop) throws InvalidDataException {
+        int index = indexOf(laptop);
+        if (index < 0) {
+            return null;
+        }
+        return laptopList.get(index);
+    }
+
+    private int indexOf(Laptop laptop) throws InvalidDataException {
+        if (laptop == null) {
+            throw new InvalidDataException("Nie wskazano laptopa.");
+        }
+        return laptopList.indexOf(laptop);
+    }
+
+    private String missingLaptopMessage() {
+        return "Brak laptopa w oddziale \"" + branchName + "\".";
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\model\StoreManager.java
+================================================================================
+package lab3.model;
+
+import lab3.exception.BranchFullException;
+import lab3.exception.BranchNotFoundException;
+import lab3.exception.DuplicateBranchException;
+import lab3.exception.DuplicateLaptopException;
+import lab3.exception.InvalidDataException;
+import lab3.exception.LaptopNotFoundException;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Sieć oddziałów. Kluczem mapy jest nazwa oddziału.
+ * {@link LinkedHashMap} zachowuje kolejność dodania przy podglądzie po nazwie,
+ * a lista {@link #branches} jest tą samą referencją, którą sortuje interfejs.
+ */
+public class StoreManager {
+    private final List<Branch> branches = new ArrayList<>();
+    private final List<Branch> branchView = Collections.unmodifiableList(branches);
+    private final Map<String, Branch> byName = new LinkedHashMap<>();
+
+    public Branch addBranch(String name, int capacity) throws InvalidDataException, DuplicateBranchException {
+        if (name == null || name.trim().isEmpty()) {
+            throw new InvalidDataException("Nie dodano oddziału: nazwa jest pusta.");
+        }
+        String branchName = name.trim();
+        if (byName.containsKey(branchName)) {
+            throw new DuplicateBranchException("Oddział \"" + branchName + "\" już istnieje.");
+        }
+        if (capacity <= 0) {
+            throw new InvalidDataException("Nie dodano oddziału \"" + branchName + "\": pojemność musi być dodatnia.");
+        }
+        Branch branch = new Branch(branchName, capacity);
+        byName.put(branchName, branch);
+        branches.add(branch);
+        return branch;
+    }
+
+    public Branch removeBranch(String name) throws InvalidDataException, BranchNotFoundException {
+        if (name == null || name.trim().isEmpty()) {
+            throw new InvalidDataException("Nie usunięto oddziału: brak nazwy.");
+        }
+        String branchName = name.trim();
+        Branch removed = byName.remove(branchName);
+        if (removed == null) {
+            throw new BranchNotFoundException("Nie znaleziono oddziału \"" + branchName + "\".");
+        }
+        branches.remove(removed);
+        return removed;
+    }
+
+    public List<Branch> findEmpty() {
+        List<Branch> empty = new ArrayList<>();
+        for (Branch branch : branches) {
+            if (branch.isEmpty()) {
+                empty.add(branch);
+            }
+        }
+        return empty;
+    }
+
+    /** Nazwa oddziału i procentowe zapełnienie. */
+    public void summary() {
+        System.out.println("=== Sieć sklepów (" + branches.size() + " oddziałów) ===");
+        if (branches.isEmpty()) {
+            System.out.println("Brak oddziałów.");
+            return;
+        }
+        for (Branch branch : branches) {
+            System.out.printf("Oddział: %s — zapełnienie %d/%d (%.1f%%)%n",
+                    branch.getBranchName(),
+                    branch.size(),
+                    branch.getMaxCapacity(),
+                    branch.fillRatio() * 100.0);
+        }
+    }
+
+    /**
+     * Przenosi laptop między oddziałami. Najpierw sprawdza miejsce i duplikat w celu,
+     * dopiero potem zdejmuje laptop ze źródła — nieudany transfer nic nie usuwa.
+     */
+    public void transferLaptop(Laptop laptop, String fromBranch, String toBranch)
+            throws InvalidDataException, BranchNotFoundException, LaptopNotFoundException,
+            DuplicateLaptopException, BranchFullException {
+        if (laptop == null) {
+            throw new InvalidDataException("Nie przeniesiono laptopa: brak obiektu.");
+        }
+        Branch source = requireBranch(fromBranch, "źródłowego");
+        Branch destination = requireBranch(toBranch, "docelowego");
+        if (source == destination) {
+            throw new InvalidDataException("Nie przeniesiono laptopa: źródło i cel to ten sam oddział.");
+        }
+        if (!source.contains(laptop)) {
+            throw new LaptopNotFoundException("Nie przeniesiono laptopa: nie ma go w oddziale \""
+                    + source.getBranchName() + "\".");
+        }
+        if (destination.contains(laptop)) {
+            throw new DuplicateLaptopException("Nie przeniesiono laptopa: w \"" + destination.getBranchName()
+                    + "\" jest już egzemplarz o tym samym modelu, marce i wieku.");
+        }
+        if (destination.isFull()) {
+            throw new BranchFullException("Nie przeniesiono laptopa: oddział \"" + destination.getBranchName()
+                    + "\" jest pełny (" + destination.size() + "/" + destination.getMaxCapacity() + ").");
+        }
+        Laptop moved = source.take(laptop);
+        destination.attach(moved);
+    }
+
+    public double totalValue() {
+        double sum = 0;
+        for (Branch branch : branches) {
+            sum += branch.totalValue();
+        }
+        return sum;
+    }
+
+    public Branch getBranch(String name) {
+        if (name == null) {
+            return null;
+        }
+        return byName.get(name.trim());
+    }
+
+    /**
+     * Ta sama lista, którą ogląda tabela oddziałów.
+     * {@link #sortByCurrentLoad()} sortuje ją w miejscu.
+     */
+    public List<Branch> getBranches() {
+        return branchView;
+    }
+
+    /** Malejąco po aktualnym zapełnieniu, a przy remisie alfabetycznie po nazwie. */
+    public void sortByCurrentLoad() {
+        branches.sort(Comparator.comparingDouble(Branch::fillRatio).reversed()
+                .thenComparing(Branch::getBranchName));
+    }
+
+    private Branch requireBranch(String name, String role) throws InvalidDataException, BranchNotFoundException {
+        if (name == null || name.trim().isEmpty()) {
+            throw new InvalidDataException("Nie przeniesiono laptopa: brak nazwy oddziału " + role + ".");
+        }
+        Branch branch = byName.get(name.trim());
+        if (branch == null) {
+            throw new BranchNotFoundException("Nie przeniesiono laptopa: brak oddziału \"" + name.trim() + "\".");
+        }
+        return branch;
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\auth\AuthService.java
+================================================================================
+package lab3.auth;
+
+import lab3.exception.InvalidDataException;
+
+/** Rozróżnia klienta sklepu i pracownika. Dane logowania są stałe, bo to laboratorium. */
+public final class AuthService {
+    public enum Role {
+        ADMIN,
+        CLIENT
+    }
+
+    private AuthService() {
+    }
+
+    public static Role authenticate(String username, String password) throws InvalidDataException {
+        if (username == null || password == null) {
+            throw new InvalidDataException("Podaj login i hasło.");
+        }
+        String user = username.trim();
+        if (user.equals("admin") && password.equals("admin")) {
+            return Role.ADMIN;
+        }
+        if (user.equals("klient") && password.equals("klient")) {
+            return Role.CLIENT;
+        }
+        throw new InvalidDataException("Nieprawidłowy login lub hasło.");
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\data\DataGenerator.java
+================================================================================
+package lab3.data;
+
+import lab3.exception.StoreException;
+import lab3.model.Branch;
+import lab3.model.Laptop;
+import lab3.model.LaptopCondition;
+import lab3.model.StoreManager;
+
+/**
+ * Dane startowe do sprawdzenia interfejsu: kilka oddziałów i kilkanaście laptopów.
+ * Aplikacja korzysta z jednej instancji (Singleton), testy wołają {@link #createSample()}.
+ */
+public final class DataGenerator {
+    private static DataGenerator instance;
+    private final StoreManager manager;
+
+    private DataGenerator(StoreManager manager) {
+        this.manager = manager;
+    }
+
+    public static synchronized DataGenerator getInstance() throws StoreException {
+        if (instance == null) {
+            instance = new DataGenerator(createSample());
+        }
+        return instance;
+    }
+
+    public StoreManager getManager() {
+        return manager;
+    }
+
+    public static StoreManager createSample() throws StoreException {
+        StoreManager manager = new StoreManager();
+        Branch warszawa = manager.addBranch("Warszawa Centrum", 6);
+        Branch krakow = manager.addBranch("Kraków Kazimierz", 4);
+        Branch gdansk = manager.addBranch("Gdańsk Wrzeszcz", 5);
+        Branch poznan = manager.addBranch("Poznań Rynek", 3);
+        manager.addBranch("Wrocław Rynek", 3);
+
+        add(warszawa, laptop("ThinkPad T480", "Lenovo", LaptopCondition.WORKING, 2018, 1199.0,
+                16, "Intel Core i5-8350U", 87, "PF-T480-2018"));
+        add(warszawa, laptop("Latitude 7490", "Dell", LaptopCondition.IN_TESTING, 2019, 999.0,
+                8, "Intel Core i5-8365U", 92, "PF-L7490-2019"));
+        add(warszawa, laptop("MacBook Pro 13", "Apple", LaptopCondition.WORKING, 2017, 2499.0,
+                8, "Intel Core i5-7360U", 78, "PF-MBP13-2017"));
+        add(warszawa, laptop("EliteBook 840 G5", "HP", LaptopCondition.DAMAGED, 2018, 799.0,
+                16, "Intel Core i5-8250U", 64, "PF-EB840-2018"));
+        add(warszawa, laptop("VivoBook 15", "Asus", LaptopCondition.WORKING, 2022, 1599.0,
+                16, "Intel Core i5-1235U", 100, "PF-VB15-2022"));
+
+        add(krakow, laptop("ThinkPad T480", "Lenovo", LaptopCondition.WORKING, 2020, 1399.0,
+                16, "Intel Core i5-10210U", 95, "PF-T480-2020"));
+        add(krakow, laptop("ZenBook 14", "Asus", LaptopCondition.IN_REPAIR, 2021, 1899.0,
+                16, "AMD Ryzen 5 5500U", 90, "PF-ZU14-2021"));
+        add(krakow, laptop("XPS 13", "Dell", LaptopCondition.IN_TESTING, 2020, 2199.0,
+                16, "Intel Core i7-1165G7", 88, "PF-XPS13-2020"));
+        add(krakow, laptop("Chromebook 14", "Acer", LaptopCondition.WORKING, 2019, 499.0,
+                4, "Intel Celeron N4100", 80, "PF-CB14-2019"));
+
+        add(gdansk, laptop("MacBook Air", "Apple", LaptopCondition.DAMAGED, 2019, 1799.0,
+                8, "Intel Core i5-8210Y", 70, "PF-MBA-2019"));
+        add(gdansk, laptop("ProBook 450", "HP", LaptopCondition.WORKING, 2021, 1099.0,
+                16, "Intel Core i5-1135G7", 91, "PF-PB450-2021"));
+        add(gdansk, laptop("IdeaPad 5", "Lenovo", LaptopCondition.IN_REPAIR, 2022, 1399.0,
+                16, "AMD Ryzen 5 5625U", 84, "PF-IP5-2022"));
+        add(gdansk, laptop("Inspiron 15", "Dell", LaptopCondition.WORKING, 2018, 899.0,
+                8, "Intel Core i5-8265U", 76, "PF-IN15-2018"));
+
+        add(poznan, laptop("Aspire 5", "Acer", LaptopCondition.DAMAGED, 2020, 999.0,
+                8, "AMD Ryzen 3 4300U", 60, "PF-AS5-2020"));
+        add(poznan, laptop("Modern 14", "MSI", LaptopCondition.RESERVED, 2023, 2299.0,
+                16, "Intel Core i7-1355U", 98, "PF-MD14-2023"));
+        return manager;
+    }
+
+    private static void add(Branch branch, Laptop laptop) throws StoreException {
+        branch.addLaptop(laptop);
+    }
+
+    private static Laptop laptop(String model, String brand, LaptopCondition condition, int year, double price,
+                                 int ramGb, String processor, int batteryHealth, String serialNumber)
+            throws StoreException {
+        return new Laptop(model, brand, condition, year, price, ramGb, processor, batteryHealth, serialNumber);
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\facade\ContactRequest.java
+================================================================================
+package lab3.facade;
+
+/** Prośba klienta o kontakt w sprawie konkretnego egzemplarza. Widoczna w panelu administratora. */
+public class ContactRequest {
+    private final String clientName;
+    private final String branchName;
+    private final String laptopLabel;
+    private final String message;
+
+    public ContactRequest(String clientName, String branchName, String laptopLabel, String message) {
+        this.clientName = clientName;
+        this.branchName = branchName;
+        this.laptopLabel = laptopLabel;
+        this.message = message;
+    }
+
+    public String getClientName() {
+        return clientName;
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public String getLaptopLabel() {
+        return laptopLabel;
+    }
+
+    public String getMessage() {
+        return message;
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\facade\StoreFacade.java
+================================================================================
+package lab3.facade;
+
+import lab3.exception.BranchFullException;
+import lab3.exception.BranchNotFoundException;
+import lab3.exception.DuplicateBranchException;
+import lab3.exception.DuplicateLaptopException;
+import lab3.exception.InvalidDataException;
+import lab3.exception.InvalidPriceException;
+import lab3.exception.LaptopNotFoundException;
+import lab3.model.Branch;
+import lab3.model.Laptop;
+import lab3.model.LaptopCondition;
+import lab3.model.StoreManager;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+
+/**
+ * Fasada między interfejsem a modelem. UI woła tylko te operacje,
+ * których potrzebuje panel administratora albo klienta.
+ */
+public class StoreFacade {
+    private final StoreManager manager;
+    private final List<ContactRequest> contactRequests = new ArrayList<>();
+
+    public StoreFacade(StoreManager manager) throws InvalidDataException {
+        if (manager == null) {
+            throw new InvalidDataException("Menedżer sieci jest wymagany.");
+        }
+        this.manager = manager;
+    }
+
+    /** Ta sama referencja listy, którą sortuje {@link #sortBranchesByCurrentLoad()}. */
+    public List<Branch> getBranches() {
+        return manager.getBranches();
+    }
+
+    public Branch addBranch(String name, int capacity) throws InvalidDataException, DuplicateBranchException {
+        return manager.addBranch(name, capacity);
+    }
+
+    public void removeBranch(Branch branch) throws InvalidDataException, BranchNotFoundException {
+        Branch stored = requireBranch(branch);
+        manager.removeBranch(stored.getBranchName());
+    }
+
+    public void addLaptop(Branch branch, Laptop laptop)
+            throws InvalidDataException, BranchNotFoundException, DuplicateLaptopException, BranchFullException {
+        if (laptop == null) {
+            throw new InvalidDataException("Nie wskazano laptopa.");
+        }
+        requireBranch(branch).addLaptop(laptop);
+    }
+
+    public void removeLaptop(Branch branch, Laptop laptop)
+            throws InvalidDataException, BranchNotFoundException, LaptopNotFoundException {
+        requireBranch(branch).removeLaptop(laptop);
+    }
+
+    /**
+     * Jedno wywołanie sortuje oddziały po aktualnym zapełnieniu.
+     * Tabela trzyma wynik {@link #getBranches()}, więc nie kopiujemy kolekcji.
+     */
+    public void sortBranchesByCurrentLoad() {
+        manager.sortByCurrentLoad();
+    }
+
+    public List<Laptop> filterLaptops(Branch branch, String text, LaptopCondition condition) {
+        if (branch == null) {
+            return new ArrayList<>();
+        }
+        String query = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
+        List<Laptop> result = new ArrayList<>();
+        for (Laptop laptop : branch.getLaptops()) {
+            boolean textMatches = query.isEmpty()
+                    || laptop.getModel().toLowerCase(Locale.ROOT).contains(query)
+                    || laptop.getBrand().toLowerCase(Locale.ROOT).contains(query);
+            boolean conditionMatches = condition == null || laptop.getCondition() == condition;
+            if (textMatches && conditionMatches) {
+                result.add(laptop);
+            }
+        }
+        return result;
+    }
+
+    public void reserveLaptop(Branch branch, Laptop laptop)
+            throws InvalidDataException, BranchNotFoundException, LaptopNotFoundException {
+        Branch stored = requireBranch(branch);
+        Laptop found = requireLaptop(stored, laptop);
+        if (found.getCondition() != LaptopCondition.WORKING) {
+            throw new InvalidDataException("Rezerwacja jest możliwa tylko dla laptopów w stanie Sprawny.");
+        }
+        stored.changeCondition(found, LaptopCondition.RESERVED);
+    }
+
+    public void changeCondition(Branch branch, Laptop laptop, LaptopCondition condition)
+            throws InvalidDataException, BranchNotFoundException, LaptopNotFoundException {
+        requireBranch(branch).changeCondition(laptop, condition);
+    }
+
+    public void changePrice(Branch branch, Laptop laptop, double price)
+            throws InvalidDataException, BranchNotFoundException, LaptopNotFoundException, InvalidPriceException {
+        requireBranch(branch).changePrice(laptop, price);
+    }
+
+    public void requestContact(Branch branch, Laptop laptop, String clientName, String message)
+            throws InvalidDataException, BranchNotFoundException, LaptopNotFoundException {
+        Branch stored = requireBranch(branch);
+        Laptop found = requireLaptop(stored, laptop);
+        if (clientName == null || clientName.trim().isEmpty()) {
+            throw new InvalidDataException("Podaj imię i nazwisko.");
+        }
+        if (message == null || message.trim().isEmpty()) {
+            throw new InvalidDataException("Wpisz treść prośby o kontakt.");
+        }
+        contactRequests.add(new ContactRequest(
+                clientName.trim(),
+                stored.getBranchName(),
+                found.getBrand() + " " + found.getModel() + " (" + found.getSerialNumber() + ")",
+                message.trim()));
+    }
+
+    public List<ContactRequest> getContactRequests() {
+        return Collections.unmodifiableList(contactRequests);
+    }
+
+    private Branch requireBranch(Branch branch) throws InvalidDataException, BranchNotFoundException {
+        if (branch == null) {
+            throw new InvalidDataException("Wybierz oddział.");
+        }
+        Branch stored = manager.getBranch(branch.getBranchName());
+        if (stored == null) {
+            throw new BranchNotFoundException("Nie znaleziono oddziału \"" + branch.getBranchName() + "\".");
+        }
+        return stored;
+    }
+
+    private Laptop requireLaptop(Branch branch, Laptop laptop)
+            throws InvalidDataException, LaptopNotFoundException {
+        if (laptop == null) {
+            throw new InvalidDataException("Wybierz laptop.");
+        }
+        for (Laptop stored : branch.getLaptops()) {
+            if (stored.equals(laptop)) {
+                return stored;
+            }
+        }
+        throw new LaptopNotFoundException("Brak laptopa w oddziale \"" + branch.getBranchName() + "\".");
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\ui\Navigator.java
+================================================================================
+package lab3.ui;
+
+public interface Navigator {
+    void showAdmin();
+
+    void showClient();
+
+    void showLogin();
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\ui\Layouts.java
+================================================================================
+package lab3.ui;
+
+import java.awt.GridBagConstraints;
+import java.awt.Insets;
+
+final class Layouts {
+    private Layouts() {
+    }
+
+    static GridBagConstraints cell(int x, int y, int width, double weightx, double weighty, int fill) {
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridx = x;
+        constraints.gridy = y;
+        constraints.gridwidth = width;
+        constraints.weightx = weightx;
+        constraints.weighty = weighty;
+        constraints.fill = fill;
+        constraints.insets = new Insets(4, 4, 4, 4);
+        constraints.anchor = GridBagConstraints.WEST;
+        return constraints;
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\ui\Parsers.java
+================================================================================
+package lab3.ui;
+
+import lab3.exception.InvalidDataException;
+
+final class Parsers {
+    private Parsers() {
+    }
+
+    static int integer(String text, String field) throws InvalidDataException {
+        if (text == null || text.trim().isEmpty()) {
+            throw new InvalidDataException(field + " musi być liczbą całkowitą.");
+        }
+        try {
+            return Integer.parseInt(text.trim());
+        } catch (NumberFormatException ex) {
+            throw new InvalidDataException(field + " musi być liczbą całkowitą.");
+        }
+    }
+
+    static double decimal(String text, String field) throws InvalidDataException {
+        if (text == null || text.trim().isEmpty()) {
+            throw new InvalidDataException(field + " musi być liczbą.");
+        }
+        try {
+            return Double.parseDouble(text.trim().replace(',', '.'));
+        } catch (NumberFormatException ex) {
+            throw new InvalidDataException(field + " musi być liczbą.");
+        }
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\ui\GenericTableModel.java
+================================================================================
+package lab3.ui;
+
+import lab3.exception.InvalidDataException;
+
+import javax.swing.table.AbstractTableModel;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Model tabeli oparty na refleksji. Te same kolumny opisane nazwami getterów
+ * obsługują oddziały, laptopy i prośby o kontakt.
+ */
+public class GenericTableModel<T> extends AbstractTableModel {
+    private List<T> rows;
+    private final String[] columnNames;
+    private final Method[] getters;
+
+    public GenericTableModel(Class<T> type, List<T> rows, String[] columnNames, String[] properties)
+            throws InvalidDataException {
+        if (type == null || columnNames == null || properties == null || columnNames.length != properties.length) {
+            throw new InvalidDataException("Niepoprawna definicja kolumn tabeli.");
+        }
+        this.rows = rows == null ? new ArrayList<>() : rows;
+        this.columnNames = columnNames.clone();
+        this.getters = new Method[properties.length];
+        for (int i = 0; i < properties.length; i++) {
+            getters[i] = findGetter(type, properties[i]);
+        }
+    }
+
+    public void setRows(List<T> rows) {
+        this.rows = rows == null ? new ArrayList<>() : rows;
+        fireTableDataChanged();
+    }
+
+    public void refresh() {
+        fireTableDataChanged();
+    }
+
+    public T getRow(int index) {
+        return rows.get(index);
+    }
+
+    @Override
+    public int getRowCount() {
+        return rows.size();
+    }
+
+    @Override
+    public int getColumnCount() {
+        return columnNames.length;
+    }
+
+    @Override
+    public String getColumnName(int column) {
+        return columnNames[column];
+    }
+
+    @Override
+    public boolean isCellEditable(int rowIndex, int columnIndex) {
+        return false;
+    }
+
+    @Override
+    public Object getValueAt(int rowIndex, int columnIndex) {
+        try {
+            return getters[columnIndex].invoke(rows.get(rowIndex));
+        } catch (IllegalAccessException | InvocationTargetException ex) {
+            return "";
+        }
+    }
+
+    private static Method findGetter(Class<?> type, String property) throws InvalidDataException {
+        if (property == null || property.isEmpty()) {
+            throw new InvalidDataException("Nazwa właściwości jest pusta.");
+        }
+        String suffix = Character.toUpperCase(property.charAt(0)) + property.substring(1);
+        try {
+            return type.getMethod("get" + suffix);
+        } catch (NoSuchMethodException notFound) {
+            try {
+                return type.getMethod(property);
+            } catch (NoSuchMethodException again) {
+                throw new InvalidDataException(
+                        "Brak właściwości \"" + property + "\" w klasie " + type.getSimpleName() + ".");
+            }
+        }
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\ui\GenericTable.java
+================================================================================
+package lab3.ui;
+
+import lab3.exception.InvalidDataException;
+import lab3.facade.ContactRequest;
+import lab3.model.Branch;
+import lab3.model.Laptop;
+
+import javax.swing.JScrollPane;
+import javax.swing.JTable;
+import javax.swing.ListSelectionModel;
+import javax.swing.event.ListSelectionEvent;
+import javax.swing.event.ListSelectionListener;
+import java.awt.Dimension;
+import java.util.List;
+import java.util.function.Consumer;
+
+/** Komponent tabeli używany i dla oddziałów, i dla laptopów. */
+public class GenericTable<T> extends JScrollPane {
+    private final GenericTableModel<T> model;
+    private final JTable table;
+
+    public GenericTable(Class<T> type, List<T> rows, String[] columnNames, String[] properties)
+            throws InvalidDataException {
+        model = new GenericTableModel<>(type, rows, columnNames, properties);
+        table = new JTable(model);
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.setFillsViewportHeight(true);
+        table.setAutoCreateRowSorter(false);
+        table.setRowHeight(22);
+        setViewportView(table);
+        setPreferredSize(new Dimension(460, 200));
+    }
+
+    public static GenericTable<Branch> branches(List<Branch> rows) throws InvalidDataException {
+        return new GenericTable<>(
+                Branch.class,
+                rows,
+                new String[]{"Nazwa", "Pojemność", "Liczba laptopów", "Zapełnienie"},
+                new String[]{"branchName", "maxCapacity", "laptopCount", "fillLabel"});
+    }
+
+    public static GenericTable<Laptop> laptops(List<Laptop> rows) throws InvalidDataException {
+        return new GenericTable<>(
+                Laptop.class,
+                rows,
+                new String[]{"Marka", "Model", "Stan", "Rok", "Wiek", "Cena", "RAM (GB)", "Procesor", "Bateria (%)", "Numer seryjny"},
+                new String[]{"brand", "model", "condition", "year", "age", "priceLabel", "ramGb", "processor", "batteryHealth", "serialNumber"});
+    }
+
+    public static GenericTable<ContactRequest> requests(List<ContactRequest> rows) throws InvalidDataException {
+        GenericTable<ContactRequest> table = new GenericTable<>(
+                ContactRequest.class,
+                rows,
+                new String[]{"Klient", "Oddział", "Laptop", "Wiadomość"},
+                new String[]{"clientName", "branchName", "laptopLabel", "message"});
+        table.setPreferredSize(new Dimension(460, 110));
+        return table;
+    }
+
+    public JTable getTable() {
+        return table;
+    }
+
+    public GenericTableModel<T> getModel() {
+        return model;
+    }
+
+    public int getRowCount() {
+        return model.getRowCount();
+    }
+
+    public T getRow(int index) {
+        return model.getRow(index);
+    }
+
+    public T getSelected() {
+        int row = table.getSelectedRow();
+        if (row < 0 || row >= model.getRowCount()) {
+            return null;
+        }
+        return model.getRow(row);
+    }
+
+    public void selectRow(int index) {
+        if (index < 0 || index >= model.getRowCount()) {
+            table.clearSelection();
+            return;
+        }
+        table.setRowSelectionInterval(index, index);
+    }
+
+    public void setRows(List<T> rows) {
+        model.setRows(rows);
+    }
+
+    public void refresh() {
+        model.refresh();
+    }
+
+    public void onSelection(final Consumer<T> listener) {
+        table.getSelectionModel().addListSelectionListener(new ListSelectionListener() {
+            @Override
+            public void valueChanged(ListSelectionEvent event) {
+                if (!event.getValueIsAdjusting()) {
+                    listener.accept(getSelected());
+                }
+            }
+        });
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\ui\InputDialogs.java
+================================================================================
+package lab3.ui;
+
+import lab3.exception.InvalidDataException;
+import lab3.exception.InvalidPriceException;
+import lab3.model.Laptop;
+import lab3.model.LaptopCondition;
+
+import javax.swing.JComboBox;
+import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import java.awt.Component;
+import java.awt.GridLayout;
+import java.time.Year;
+
+/** Okna dialogowe Swing. Błędy modelu pokazuje {@link JOptionPane}. */
+final class InputDialogs {
+    private InputDialogs() {
+    }
+
+    static void error(Component parent, String message) {
+        JOptionPane.showMessageDialog(parent, message, "Błąd", JOptionPane.ERROR_MESSAGE);
+    }
+
+    static boolean confirm(Component parent, String message) {
+        int answer = JOptionPane.showConfirmDialog(parent, message, "Potwierdzenie",
+                JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        return answer == JOptionPane.YES_OPTION;
+    }
+
+    static String[] branch(Component parent) {
+        JTextField name = new JTextField();
+        JTextField capacity = new JTextField();
+        JPanel form = form();
+        form.add(new JLabel("Nazwa oddziału"));
+        form.add(name);
+        form.add(new JLabel("Pojemność"));
+        form.add(capacity);
+        if (!accepted(parent, form, "add branch")) {
+            return null;
+        }
+        return new String[]{name.getText(), capacity.getText()};
+    }
+
+    static Laptop laptop(Component parent) {
+        JTextField model = new JTextField();
+        JTextField brand = new JTextField();
+        JComboBox<LaptopCondition> condition = new JComboBox<>(LaptopCondition.values());
+        JTextField year = new JTextField(String.valueOf(Year.now().getValue()));
+        JTextField price = new JTextField();
+        JTextField ram = new JTextField("8");
+        JTextField processor = new JTextField();
+        JTextField battery = new JTextField("100");
+        JPanel form = form();
+        form.add(new JLabel("Model"));
+        form.add(model);
+        form.add(new JLabel("Marka"));
+        form.add(brand);
+        form.add(new JLabel("Stan"));
+        form.add(condition);
+        form.add(new JLabel("Rok produkcji"));
+        form.add(year);
+        form.add(new JLabel("Cena (zł)"));
+        form.add(price);
+        form.add(new JLabel("RAM (GB)"));
+        form.add(ram);
+        form.add(new JLabel("Procesor"));
+        form.add(processor);
+        form.add(new JLabel("Bateria (%)"));
+        form.add(battery);
+        if (!accepted(parent, form, "add new laptop")) {
+            return null;
+        }
+        try {
+            return new Laptop(
+                    model.getText(),
+                    brand.getText(),
+                    (LaptopCondition) condition.getSelectedItem(),
+                    Parsers.integer(year.getText(), "Rok produkcji"),
+                    Parsers.decimal(price.getText(), "Cena"),
+                    Parsers.integer(ram.getText(), "RAM"),
+                    processor.getText(),
+                    Parsers.integer(battery.getText(), "Bateria"));
+        } catch (InvalidPriceException | InvalidDataException ex) {
+            error(parent, ex.getMessage());
+            return null;
+        }
+    }
+
+    static LaptopCondition condition(Component parent, LaptopCondition current) {
+        JComboBox<LaptopCondition> box = new JComboBox<>(LaptopCondition.values());
+        box.setSelectedItem(current);
+        if (!accepted(parent, box, "edit condition")) {
+            return null;
+        }
+        return (LaptopCondition) box.getSelectedItem();
+    }
+
+    static String price(Component parent, double current) {
+        Object value = JOptionPane.showInputDialog(parent, "Nowa cena (zł)", "edit price",
+                JOptionPane.QUESTION_MESSAGE, null, null, current);
+        if (value == null) {
+            return null;
+        }
+        return value.toString();
+    }
+
+    static String[] contact(Component parent) {
+        JTextField name = new JTextField();
+        JTextArea message = new JTextArea(4, 24);
+        JPanel form = form();
+        form.add(new JLabel("Imię i nazwisko"));
+        form.add(name);
+        form.add(new JLabel("Wiadomość"));
+        form.add(message);
+        if (!accepted(parent, form, "request contact")) {
+            return null;
+        }
+        return new String[]{name.getText(), message.getText()};
+    }
+
+    private static JPanel form() {
+        JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
+        return form;
+    }
+
+    private static boolean accepted(Component parent, JComponent form, String title) {
+        int result = JOptionPane.showConfirmDialog(parent, form, title,
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        return result == JOptionPane.OK_OPTION;
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\ui\CatalogView.java
+================================================================================
+package lab3.ui;
+
+import lab3.exception.InvalidDataException;
+import lab3.facade.StoreFacade;
+import lab3.model.Branch;
+import lab3.model.Laptop;
+import lab3.model.LaptopCondition;
+
+import javax.swing.JComboBox;
+import javax.swing.JTextField;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.util.ArrayList;
+
+/**
+ * Wspólny widok dwóch tabel: oddziały i laptopy wybranego oddziału,
+ * razem z polem filter i listą condition.
+ */
+final class CatalogView {
+    final GenericTable<Branch> branches;
+    final GenericTable<Laptop> laptops;
+    final JTextField filterField;
+    final JComboBox<Object> conditionBox;
+    private final StoreFacade facade;
+    private Branch selected;
+
+    CatalogView(StoreFacade facade) throws InvalidDataException {
+        this.facade = facade;
+        branches = GenericTable.branches(facade.getBranches());
+        laptops = GenericTable.laptops(new ArrayList<Laptop>());
+        filterField = new JTextField(18);
+        filterField.setToolTipText("Nazwa modelu lub marki. Enter filtruje laptopy wybranego oddziału.");
+        conditionBox = new JComboBox<>();
+        conditionBox.addItem("Wszystkie");
+        for (LaptopCondition condition : LaptopCondition.values()) {
+            conditionBox.addItem(condition);
+        }
+        conditionBox.setToolTipText("Zostaw tylko laptopy w wybranym stanie.");
+        branches.onSelection(new java.util.function.Consumer<Branch>() {
+            @Override
+            public void accept(Branch branch) {
+                selected = branch;
+                applyFilter();
+            }
+        });
+        filterField.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                applyFilter();
+            }
+        });
+        conditionBox.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                applyFilter();
+            }
+        });
+        selectFirstBranch();
+    }
+
+    Branch getSelectedBranch() {
+        return selected;
+    }
+
+    Laptop getSelectedLaptop() {
+        return laptops.getSelected();
+    }
+
+    void selectFirstBranch() {
+        if (branches.getRowCount() > 0) {
+            branches.selectRow(0);
+        }
+    }
+
+    void selectBranch(String name) {
+        for (int i = 0; i < branches.getRowCount(); i++) {
+            if (name.equals(branches.getRow(i).getBranchName())) {
+                selected = branches.getRow(i);
+                branches.selectRow(i);
+                applyFilter();
+                return;
+            }
+        }
+    }
+
+    void reloadBranchesKeepingSelection() {
+        String preferredName = selected == null ? null : selected.getBranchName();
+        branches.refresh();
+        if (branches.getRowCount() == 0) {
+            selected = null;
+            applyFilter();
+            return;
+        }
+        int index = 0;
+        if (preferredName != null) {
+            for (int i = 0; i < branches.getRowCount(); i++) {
+                if (preferredName.equals(branches.getRow(i).getBranchName())) {
+                    index = i;
+                    break;
+                }
+            }
+        }
+        branches.selectRow(index);
+    }
+
+    void applyFilter() {
+        laptops.setRows(facade.filterLaptops(selected, filterField.getText(), selectedCondition()));
+    }
+
+    private LaptopCondition selectedCondition() {
+        Object item = conditionBox.getSelectedItem();
+        if (item instanceof LaptopCondition) {
+            return (LaptopCondition) item;
+        }
+        return null;
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\ui\LoginPanel.java
+================================================================================
+package lab3.ui;
+
+import lab3.auth.AuthService;
+import lab3.exception.InvalidDataException;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JPasswordField;
+import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
+import java.awt.Font;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+
+/** Moduł logowania. Administrator i klient dostają inne panele. */
+public class LoginPanel extends JPanel {
+    final JTextField username = new JTextField(16);
+    final JPasswordField password = new JPasswordField(16);
+    final JButton loginButton = new JButton("Zaloguj");
+
+    public LoginPanel(final Navigator navigator) {
+        setLayout(new GridBagLayout());
+        setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+
+        JLabel title = new JLabel("Sieć sklepów z laptopami");
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 22f));
+        JLabel hint = new JLabel("Administrator: admin / admin     Klient: klient / klient");
+
+        add(title, Layouts.cell(0, 0, 2, 1, 0, GridBagConstraints.NONE));
+        add(new JLabel("Login"), Layouts.cell(0, 1, 1, 0, 0, GridBagConstraints.NONE));
+        add(username, Layouts.cell(1, 1, 1, 0, 0, GridBagConstraints.HORIZONTAL));
+        add(new JLabel("Hasło"), Layouts.cell(0, 2, 1, 0, 0, GridBagConstraints.NONE));
+        add(password, Layouts.cell(1, 2, 1, 0, 0, GridBagConstraints.HORIZONTAL));
+        add(loginButton, Layouts.cell(1, 3, 1, 0, 0, GridBagConstraints.NONE));
+        add(hint, Layouts.cell(0, 4, 2, 0, 0, GridBagConstraints.NONE));
+
+        loginButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                login(navigator);
+            }
+        });
+    }
+
+    @Override
+    public void addNotify() {
+        super.addNotify();
+        if (SwingUtilities.getRootPane(this) != null) {
+            SwingUtilities.getRootPane(this).setDefaultButton(loginButton);
+        }
+    }
+
+    void clearPassword() {
+        password.setText("");
+    }
+
+    void login(Navigator navigator) {
+        try {
+            AuthService.Role role = AuthService.authenticate(username.getText(), new String(password.getPassword()));
+            password.setText("");
+            if (role == AuthService.Role.ADMIN) {
+                navigator.showAdmin();
+            } else {
+                navigator.showClient();
+            }
+        } catch (InvalidDataException ex) {
+            InputDialogs.error(this, ex.getMessage());
+        }
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\ui\AdminPanel.java
+================================================================================
+package lab3.ui;
+
+import lab3.exception.InvalidDataException;
+import lab3.exception.StoreException;
+import lab3.facade.StoreFacade;
+import lab3.model.Branch;
+import lab3.model.Laptop;
+import lab3.model.LaptopCondition;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JSplitPane;
+import java.awt.BorderLayout;
+import java.awt.Font;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.GridLayout;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.util.ArrayList;
+
+/** Panel pracownika: przyjęcia, usuwanie, edycja stanu i ceny, prośby o kontakt. */
+public class AdminPanel extends JPanel {
+    private final StoreFacade facade;
+    final CatalogView catalog;
+    final GenericTable<lab3.facade.ContactRequest> requests;
+    final JButton sortButton;
+    final JButton addBranchButton;
+    final JButton removeBranchButton;
+    final JButton addLaptopButton;
+    final JButton removeLaptopButton;
+    final JButton editConditionButton;
+    final JButton editPriceButton;
+    private final JLabel status = new JLabel(" ");
+
+    public AdminPanel(StoreFacade facade, final Navigator navigator) throws InvalidDataException {
+        this.facade = facade;
+        catalog = new CatalogView(facade);
+        requests = GenericTable.requests(new ArrayList<>());
+        sortButton = button("sort branches by current load", "Sortuje oddziały malejąco po zapełnieniu.");
+        addBranchButton = button("add branch", "Dodaj oddział do sieci.");
+        removeBranchButton = button("remove branch", "Usuń zaznaczony oddział.");
+        addLaptopButton = button("add new laptop", "Przyjmij laptop do zaznaczonego oddziału.");
+        removeLaptopButton = button("remove laptop", "Usuń zaznaczony laptop z oddziału.");
+        editConditionButton = button("edit condition", "Zmień stan zaznaczonego laptopa.");
+        editPriceButton = button("edit price", "Zmień cenę zaznaczonego laptopa.");
+
+        setLayout(new GridBagLayout());
+        setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        add(header("Panel administratora", navigator), Layouts.cell(0, 0, 1, 1, 0, GridBagConstraints.HORIZONTAL));
+        add(split(), Layouts.cell(0, 1, 1, 1, 1, GridBagConstraints.BOTH));
+        add(filters(), Layouts.cell(0, 2, 1, 1, 0, GridBagConstraints.HORIZONTAL));
+        add(requestsPanel(), Layouts.cell(0, 3, 1, 1, 0.45, GridBagConstraints.BOTH));
+        add(status, Layouts.cell(0, 4, 1, 1, 0, GridBagConstraints.HORIZONTAL));
+
+        addBranchButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                String[] values = InputDialogs.branch(AdminPanel.this);
+                if (values == null) {
+                    return;
+                }
+                try {
+                    addBranch(values[0], Parsers.integer(values[1], "Pojemność"));
+                } catch (InvalidDataException ex) {
+                    InputDialogs.error(AdminPanel.this, ex.getMessage());
+                }
+            }
+        });
+        removeBranchButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                Branch branch = catalog.getSelectedBranch();
+                if (branch == null) {
+                    InputDialogs.error(AdminPanel.this, "Wybierz oddział.");
+                    return;
+                }
+                if (InputDialogs.confirm(AdminPanel.this, "Usunąć oddział \"" + branch.getBranchName() + "\"?")) {
+                    removeSelectedBranch();
+                }
+            }
+        });
+        sortButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                sortBranches();
+            }
+        });
+        addLaptopButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                if (catalog.getSelectedBranch() == null) {
+                    InputDialogs.error(AdminPanel.this, "Wybierz oddział.");
+                    return;
+                }
+                Laptop laptop = InputDialogs.laptop(AdminPanel.this);
+                if (laptop != null) {
+                    addLaptop(laptop);
+                }
+            }
+        });
+        removeLaptopButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                if (catalog.getSelectedLaptop() == null) {
+                    InputDialogs.error(AdminPanel.this, "Wybierz laptop.");
+                    return;
+                }
+                if (InputDialogs.confirm(AdminPanel.this, "Usunąć zaznaczony laptop?")) {
+                    removeSelectedLaptop();
+                }
+            }
+        });
+        editConditionButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                Laptop laptop = catalog.getSelectedLaptop();
+                if (laptop == null) {
+                    InputDialogs.error(AdminPanel.this, "Wybierz laptop.");
+                    return;
+                }
+                LaptopCondition condition = InputDialogs.condition(AdminPanel.this, laptop.getCondition());
+                if (condition != null) {
+                    changeSelectedCondition(condition);
+                }
+            }
+        });
+        editPriceButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                Laptop laptop = catalog.getSelectedLaptop();
+                if (laptop == null) {
+                    InputDialogs.error(AdminPanel.this, "Wybierz laptop.");
+                    return;
+                }
+                String value = InputDialogs.price(AdminPanel.this, laptop.getPrice());
+                if (value == null) {
+                    return;
+                }
+                try {
+                    changeSelectedPrice(Parsers.decimal(value, "Cena"));
+                } catch (InvalidDataException ex) {
+                    InputDialogs.error(AdminPanel.this, ex.getMessage());
+                }
+            }
+        });
+        refreshRequests();
+    }
+
+    void refreshAll() {
+        catalog.reloadBranchesKeepingSelection();
+        refreshRequests();
+    }
+
+    void addBranch(String name, int capacity) {
+        try {
+            Branch created = facade.addBranch(name, capacity);
+            catalog.reloadBranchesKeepingSelection();
+            catalog.selectBranch(created.getBranchName());
+            status.setText("Dodano oddział " + created.getBranchName() + ".");
+        } catch (StoreException ex) {
+            InputDialogs.error(this, ex.getMessage());
+        }
+    }
+
+    void removeSelectedBranch() {
+        Branch branch = catalog.getSelectedBranch();
+        if (branch == null) {
+            InputDialogs.error(this, "Wybierz oddział.");
+            return;
+        }
+        try {
+            facade.removeBranch(branch);
+            catalog.reloadBranchesKeepingSelection();
+            status.setText("Usunięto oddział " + branch.getBranchName() + ".");
+        } catch (StoreException ex) {
+            InputDialogs.error(this, ex.getMessage());
+        }
+    }
+
+    void addLaptop(Laptop laptop) {
+        Branch branch = catalog.getSelectedBranch();
+        if (branch == null) {
+            InputDialogs.error(this, "Wybierz oddział.");
+            return;
+        }
+        try {
+            facade.addLaptop(branch, laptop);
+            catalog.reloadBranchesKeepingSelection();
+            status.setText("Dodano laptop " + laptop.getBrand() + " " + laptop.getModel() + ".");
+        } catch (StoreException ex) {
+            InputDialogs.error(this, ex.getMessage());
+        }
+    }
+
+    void removeSelectedLaptop() {
+        Branch branch = catalog.getSelectedBranch();
+        Laptop laptop = catalog.getSelectedLaptop();
+        if (branch == null || laptop == null) {
+            InputDialogs.error(this, "Wybierz laptop.");
+            return;
+        }
+        try {
+            facade.removeLaptop(branch, laptop);
+            catalog.reloadBranchesKeepingSelection();
+            status.setText("Usunięto laptop " + laptop.getBrand() + " " + laptop.getModel() + ".");
+        } catch (StoreException ex) {
+            InputDialogs.error(this, ex.getMessage());
+        }
+    }
+
+    void changeSelectedCondition(LaptopCondition condition) {
+        Branch branch = catalog.getSelectedBranch();
+        Laptop laptop = catalog.getSelectedLaptop();
+        if (branch == null || laptop == null) {
+            InputDialogs.error(this, "Wybierz laptop.");
+            return;
+        }
+        try {
+            facade.changeCondition(branch, laptop, condition);
+            catalog.reloadBranchesKeepingSelection();
+            status.setText("Zmieniono stan na " + condition + ".");
+        } catch (StoreException ex) {
+            InputDialogs.error(this, ex.getMessage());
+        }
+    }
+
+    void changeSelectedPrice(double price) {
+        Branch branch = catalog.getSelectedBranch();
+        Laptop laptop = catalog.getSelectedLaptop();
+        if (branch == null || laptop == null) {
+            InputDialogs.error(this, "Wybierz laptop.");
+            return;
+        }
+        try {
+            facade.changePrice(branch, laptop, price);
+            catalog.reloadBranchesKeepingSelection();
+            status.setText("Zmieniono cenę.");
+        } catch (StoreException ex) {
+            InputDialogs.error(this, ex.getMessage());
+        }
+    }
+
+    void sortBranches() {
+        facade.sortBranchesByCurrentLoad();
+        catalog.reloadBranchesKeepingSelection();
+        status.setText("Posortowano oddziały według aktualnego zapełnienia.");
+    }
+
+    private void refreshRequests() {
+        requests.setRows(new ArrayList<>(facade.getContactRequests()));
+    }
+
+    private JPanel header(String title, final Navigator navigator) {
+        JPanel panel = new JPanel(new BorderLayout());
+        JLabel label = new JLabel(title);
+        label.setFont(label.getFont().deriveFont(Font.BOLD, 18f));
+        JButton logout = new JButton("Wyloguj");
+        logout.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                navigator.showLogin();
+            }
+        });
+        panel.add(label, BorderLayout.WEST);
+        panel.add(logout, BorderLayout.EAST);
+        return panel;
+    }
+
+    private JSplitPane split() {
+        JPanel left = column("Oddziały", catalog.branches, addBranchButton, removeBranchButton, sortButton);
+        JPanel right = column("Laptopy", catalog.laptops, addLaptopButton, removeLaptopButton,
+                editConditionButton, editPriceButton);
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
+        split.setResizeWeight(0.38);
+        return split;
+    }
+
+    private JPanel filters() {
+        JPanel filters = new JPanel(new GridBagLayout());
+        filters.add(new JLabel("filter"), Layouts.cell(0, 0, 1, 0, 0, GridBagConstraints.NONE));
+        filters.add(catalog.filterField, Layouts.cell(1, 0, 1, 1, 0, GridBagConstraints.HORIZONTAL));
+        filters.add(new JLabel("condition"), Layouts.cell(2, 0, 1, 0, 0, GridBagConstraints.NONE));
+        filters.add(catalog.conditionBox, Layouts.cell(3, 0, 1, 0, 0, GridBagConstraints.NONE));
+        return filters;
+    }
+
+    private JPanel requestsPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("Prośby o kontakt"));
+        panel.add(requests, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private static JPanel column(String title, GenericTable<?> table, JButton... buttons) {
+        JPanel panel = new JPanel(new BorderLayout(4, 4));
+        panel.setBorder(BorderFactory.createTitledBorder(title));
+        panel.add(table, BorderLayout.CENTER);
+        JPanel bar = new JPanel(new GridLayout(buttons.length, 1, 4, 4));
+        for (JButton button : buttons) {
+            bar.add(button);
+        }
+        panel.add(bar, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private static JButton button(String text, String tooltip) {
+        JButton button = new JButton(text);
+        button.setToolTipText(tooltip);
+        return button;
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\ui\ClientPanel.java
+================================================================================
+package lab3.ui;
+
+import lab3.exception.InvalidDataException;
+import lab3.exception.StoreException;
+import lab3.facade.StoreFacade;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JSplitPane;
+import java.awt.BorderLayout;
+import java.awt.Font;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.GridLayout;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+
+/** Panel klienta: przeglądanie, filtr, sortowanie zapełnienia, rezerwacja i prośba o kontakt. */
+public class ClientPanel extends JPanel {
+    private final StoreFacade facade;
+    final CatalogView catalog;
+    final JButton sortButton;
+    final JButton reserveButton;
+    final JButton contactButton;
+    private final JLabel status = new JLabel(" ");
+
+    public ClientPanel(StoreFacade facade, final Navigator navigator) throws InvalidDataException {
+        this.facade = facade;
+        catalog = new CatalogView(facade);
+        sortButton = button("sort branches by current load", "Sortuje oddziały malejąco po zapełnieniu.");
+        reserveButton = button("reserve", "Rezerwuje zaznaczony sprawny laptop.");
+        contactButton = button("request contact", "Zostawia prośbę o kontakt widoczną dla administratora.");
+
+        setLayout(new GridBagLayout());
+        setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        add(header(navigator), Layouts.cell(0, 0, 1, 1, 0, GridBagConstraints.HORIZONTAL));
+        add(split(), Layouts.cell(0, 1, 1, 1, 1, GridBagConstraints.BOTH));
+        add(filters(), Layouts.cell(0, 2, 1, 1, 0, GridBagConstraints.HORIZONTAL));
+        add(status, Layouts.cell(0, 3, 1, 1, 0, GridBagConstraints.HORIZONTAL));
+
+        sortButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                sortBranches();
+            }
+        });
+        reserveButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                reserveSelected();
+            }
+        });
+        contactButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                if (catalog.getSelectedLaptop() == null) {
+                    InputDialogs.error(ClientPanel.this, "Wybierz laptop.");
+                    return;
+                }
+                String[] values = InputDialogs.contact(ClientPanel.this);
+                if (values != null) {
+                    requestContact(values[0], values[1]);
+                }
+            }
+        });
+    }
+
+    void refreshAll() {
+        catalog.reloadBranchesKeepingSelection();
+    }
+
+    void sortBranches() {
+        facade.sortBranchesByCurrentLoad();
+        catalog.reloadBranchesKeepingSelection();
+        status.setText("Posortowano oddziały według aktualnego zapełnienia.");
+    }
+
+    void reserveSelected() {
+        if (catalog.getSelectedBranch() == null || catalog.getSelectedLaptop() == null) {
+            InputDialogs.error(this, "Wybierz laptop do rezerwacji.");
+            return;
+        }
+        try {
+            facade.reserveLaptop(catalog.getSelectedBranch(), catalog.getSelectedLaptop());
+            catalog.reloadBranchesKeepingSelection();
+            status.setText("Zarezerwowano laptop.");
+        } catch (StoreException ex) {
+            InputDialogs.error(this, ex.getMessage());
+        }
+    }
+
+    void requestContact(String clientName, String message) {
+        try {
+            facade.requestContact(catalog.getSelectedBranch(), catalog.getSelectedLaptop(), clientName, message);
+            status.setText("Zapisano prośbę o kontakt.");
+        } catch (StoreException ex) {
+            InputDialogs.error(this, ex.getMessage());
+        }
+    }
+
+    private JPanel header(final Navigator navigator) {
+        JPanel panel = new JPanel(new BorderLayout());
+        JLabel label = new JLabel("Panel klienta");
+        label.setFont(label.getFont().deriveFont(Font.BOLD, 18f));
+        JButton logout = new JButton("Wyloguj");
+        logout.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                navigator.showLogin();
+            }
+        });
+        panel.add(label, BorderLayout.WEST);
+        panel.add(logout, BorderLayout.EAST);
+        return panel;
+    }
+
+    private JSplitPane split() {
+        JPanel left = new JPanel(new BorderLayout(4, 4));
+        left.setBorder(BorderFactory.createTitledBorder("Oddziały"));
+        left.add(catalog.branches, BorderLayout.CENTER);
+        JPanel leftButtons = new JPanel(new GridLayout(1, 1, 4, 4));
+        leftButtons.add(sortButton);
+        left.add(leftButtons, BorderLayout.SOUTH);
+
+        JPanel right = new JPanel(new BorderLayout(4, 4));
+        right.setBorder(BorderFactory.createTitledBorder("Laptopy"));
+        right.add(catalog.laptops, BorderLayout.CENTER);
+        JPanel rightButtons = new JPanel(new GridLayout(1, 2, 4, 4));
+        rightButtons.add(reserveButton);
+        rightButtons.add(contactButton);
+        right.add(rightButtons, BorderLayout.SOUTH);
+
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
+        split.setResizeWeight(0.38);
+        return split;
+    }
+
+    private JPanel filters() {
+        JPanel filters = new JPanel(new GridBagLayout());
+        filters.add(new JLabel("filter"), Layouts.cell(0, 0, 1, 0, 0, GridBagConstraints.NONE));
+        filters.add(catalog.filterField, Layouts.cell(1, 0, 1, 1, 0, GridBagConstraints.HORIZONTAL));
+        filters.add(new JLabel("condition"), Layouts.cell(2, 0, 1, 0, 0, GridBagConstraints.NONE));
+        filters.add(catalog.conditionBox, Layouts.cell(3, 0, 1, 0, 0, GridBagConstraints.NONE));
+        return filters;
+    }
+
+    private static JButton button(String text, String tooltip) {
+        JButton button = new JButton(text);
+        button.setToolTipText(tooltip);
+        return button;
+    }
+}
+
+
+================================================================================
+PLIK: src\main\java\lab3\ui\ApplicationFrame.java
+================================================================================
+package lab3.ui;
+
+import lab3.exception.InvalidDataException;
+import lab3.facade.StoreFacade;
+
+import javax.swing.JFrame;
+import javax.swing.JPanel;
+import java.awt.CardLayout;
+import java.awt.Dimension;
+
+/** Trzy moduły: logowanie, panel administratora i panel klienta. */
+public class ApplicationFrame extends JFrame implements Navigator {
+    private final CardLayout cards = new CardLayout();
+    private final JPanel root = new JPanel(cards);
+    final LoginPanel loginPanel;
+    final AdminPanel adminPanel;
+    final ClientPanel clientPanel;
+    private String visibleCard = "login";
+
+    public ApplicationFrame(StoreFacade facade) throws InvalidDataException {
+        super("PAOIM Lab 3 — sieć sklepów z laptopami");
+        loginPanel = new LoginPanel(this);
+        adminPanel = new AdminPanel(facade, this);
+        clientPanel = new ClientPanel(facade, this);
+        root.add(loginPanel, "login");
+        root.add(adminPanel, "admin");
+        root.add(clientPanel, "client");
+        setContentPane(root);
+        cards.show(root, "login");
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setMinimumSize(new Dimension(1100, 720));
+        pack();
+        setSize(1240, 800);
+        setLocationRelativeTo(null);
+    }
+
+    @Override
+    public void showAdmin() {
+        visibleCard = "admin";
+        adminPanel.refreshAll();
+        cards.show(root, "admin");
+    }
+
+    @Override
+    public void showClient() {
+        visibleCard = "client";
+        clientPanel.refreshAll();
+        cards.show(root, "client");
+    }
+
+    @Override
+    public void showLogin() {
+        visibleCard = "login";
+        loginPanel.clearPassword();
+        cards.show(root, "login");
+    }
+
+    String visibleCard() {
+        return visibleCard;
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\support\OutputCapture.java
+================================================================================
+package lab3.support;
+
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+
+public final class OutputCapture {
+    private OutputCapture() {
+    }
+
+    public static String stdout(Runnable action) {
+        PrintStream original = System.out;
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(buffer, true, StandardCharsets.UTF_8));
+            action.run();
+            return buffer.toString(StandardCharsets.UTF_8);
+        } finally {
+            System.setOut(original);
+        }
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\support\Edt.java
+================================================================================
+package lab3.support;
+
+import javax.swing.SwingUtilities;
+import java.util.concurrent.atomic.AtomicReference;
+
+public final class Edt {
+    private Edt() {
+    }
+
+    public static void run(Action action) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            action.run();
+            return;
+        }
+        AtomicReference<Exception> failure = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                action.run();
+            } catch (Exception ex) {
+                failure.set(ex);
+            }
+        });
+        if (failure.get() != null) {
+            throw failure.get();
+        }
+    }
+
+    @FunctionalInterface
+    public interface Action {
+        void run() throws Exception;
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\exception\ExceptionTest.java
+================================================================================
+package lab3.exception;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+@DisplayName("Wyjątki sprawdzane")
+public class ExceptionTest {
+    @Test
+    void domainErrorsAreCheckedExceptions() {
+        assertChecked(BranchFullException.class, new BranchFullException("pełny"), "pełny");
+        assertChecked(LaptopNotFoundException.class, new LaptopNotFoundException("brak"), "brak");
+        assertChecked(DuplicateLaptopException.class, new DuplicateLaptopException("duplikat"), "duplikat");
+        assertChecked(InvalidPriceException.class, new InvalidPriceException("cena"), "cena");
+        assertChecked(InvalidDataException.class, new InvalidDataException("dane"), "dane");
+        assertChecked(BranchNotFoundException.class, new BranchNotFoundException("oddział"), "oddział");
+        assertChecked(DuplicateBranchException.class, new DuplicateBranchException("oddział"), "oddział");
+    }
+
+    private static void assertChecked(Class<? extends StoreException> type, StoreException exception, String expectedMessage) {
+        assertTrue(Exception.class.isAssignableFrom(type));
+        assertFalse(RuntimeException.class.isAssignableFrom(type));
+        assertTrue(StoreException.class.isAssignableFrom(type));
+        assertEquals(type, exception.getClass());
+        assertEquals(expectedMessage, exception.getMessage());
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\model\LaptopTest.java
+================================================================================
+package lab3.model;
+
+import lab3.exception.InvalidDataException;
+import lab3.exception.InvalidPriceException;
+import lab3.support.OutputCapture;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.time.Year;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+@DisplayName("Laptop")
+public class LaptopTest {
+    @Test
+    void shortConstructorUsesDefaultsAndUniqueSerial() throws Exception {
+        Laptop first = new Laptop("ThinkPad T480", "Lenovo", LaptopCondition.WORKING, 2018, 1199);
+        Laptop second = new Laptop("Latitude 7490", "Dell", LaptopCondition.IN_TESTING, 2019, 0);
+        assertEquals(8, first.getRamGb());
+        assertEquals("niepodany", first.getProcessor());
+        assertEquals(100, first.getBatteryHealth());
+        assertTrue(first.getSerialNumber().startsWith("SN-"));
+        assertNotEquals(first.getSerialNumber(), second.getSerialNumber());
+        assertEquals(0, second.getPrice(), 0.001);
+    }
+
+    @Test
+    void fullConstructorKeepsAllFields() throws Exception {
+        Laptop laptop = laptop();
+        assertEquals("XPS 13", laptop.getModel());
+        assertEquals("Dell", laptop.getBrand());
+        assertEquals(LaptopCondition.WORKING, laptop.getCondition());
+        assertEquals(2020, laptop.getYear());
+        assertEquals(2199, laptop.getPrice(), 0.001);
+        assertEquals("2199.00 zł", laptop.getPriceLabel());
+        assertEquals(16, laptop.getRamGb());
+        assertEquals("Intel Core i7", laptop.getProcessor());
+        assertEquals(88, laptop.getBatteryHealth());
+        assertEquals("SN-XPS", laptop.getSerialNumber());
+        assertEquals(Year.now().getValue() - 2020, laptop.age());
+    }
+
+    @Test
+    void constructorTrimsText() throws Exception {
+        Laptop laptop = new Laptop("  XPS 13 ", " Dell ", LaptopCondition.DAMAGED, 2020, 10,
+                8, " i7 ", 50, " SN ");
+        assertEquals("XPS 13", laptop.getModel());
+        assertEquals("Dell", laptop.getBrand());
+        assertEquals("i7", laptop.getProcessor());
+        assertEquals("SN", laptop.getSerialNumber());
+    }
+
+    @Test
+    void constructorRejectsInvalidText() {
+        assertThrows(InvalidDataException.class,
+                () -> new Laptop(" ", "Dell", LaptopCondition.WORKING, 2020, 10));
+        assertThrows(InvalidDataException.class,
+                () -> new Laptop("XPS", null, LaptopCondition.WORKING, 2020, 10));
+        assertThrows(InvalidDataException.class,
+                () -> new Laptop("XPS", "Dell", LaptopCondition.WORKING, 2020, 10, 8, " ", 10, "SN"));
+        assertThrows(InvalidDataException.class,
+                () -> new Laptop("XPS", "Dell", LaptopCondition.WORKING, 2020, 10, 8, "i7", 10, null));
+    }
+
+    @Test
+    void constructorRejectsNullConditionBadYearRamAndBattery() {
+        assertThrows(InvalidDataException.class,
+                () -> new Laptop("XPS", "Dell", null, 2020, 10));
+        assertThrows(InvalidDataException.class,
+                () -> new Laptop("XPS", "Dell", LaptopCondition.WORKING, 1979, 10));
+        assertThrows(InvalidDataException.class,
+                () -> new Laptop("XPS", "Dell", LaptopCondition.WORKING, Year.now().getValue() + 1, 10));
+        assertThrows(InvalidDataException.class,
+                () -> new Laptop("XPS", "Dell", LaptopCondition.WORKING, 2020, 10, 0, "i7", 10, "SN"));
+        assertThrows(InvalidDataException.class,
+                () -> new Laptop("XPS", "Dell", LaptopCondition.WORKING, 2020, 10, 8, "i7", -1, "SN"));
+        assertThrows(InvalidDataException.class,
+                () -> new Laptop("XPS", "Dell", LaptopCondition.WORKING, 2020, 10, 8, "i7", 101, "SN"));
+    }
+
+    @Test
+    void constructorAcceptsBoundaryYearRamAndBattery() throws Exception {
+        int current = Year.now().getValue();
+        Laptop old = new Laptop("Old", "HP", LaptopCondition.DAMAGED, 1980, 1, 1, "cpu", 0, "A");
+        Laptop fresh = new Laptop("New", "HP", LaptopCondition.WORKING, current, 1, 32, "cpu", 100, "B");
+        assertEquals(1980, old.getYear());
+        assertEquals(current, fresh.getYear());
+        assertEquals(0, fresh.age());
+    }
+
+    @Test
+    void constructorAndSetterRejectBadPrice() throws Exception {
+        assertThrows(InvalidPriceException.class,
+                () -> new Laptop("XPS", "Dell", LaptopCondition.WORKING, 2020, -0.01));
+        assertThrows(InvalidPriceException.class,
+                () -> new Laptop("XPS", "Dell", LaptopCondition.WORKING, 2020, Double.NaN));
+        assertThrows(InvalidPriceException.class,
+                () -> new Laptop("XPS", "Dell", LaptopCondition.WORKING, 2020, Double.POSITIVE_INFINITY));
+        Laptop laptop = laptop();
+        assertThrows(InvalidPriceException.class, () -> laptop.setPrice(-1));
+        assertThrows(InvalidPriceException.class, () -> laptop.setPrice(Double.NaN));
+        assertEquals(2199, laptop.getPrice(), 0.001);
+        laptop.setPrice(1500);
+        assertEquals(1500, laptop.getPrice(), 0.001);
+        assertEquals("1500.00 zł", laptop.getPriceLabel());
+    }
+
+    @Test
+    void setConditionRejectsNullAndStoresValue() throws Exception {
+        Laptop laptop = laptop();
+        assertThrows(InvalidDataException.class, () -> laptop.setCondition(null));
+        laptop.setCondition(LaptopCondition.RESERVED);
+        assertEquals(LaptopCondition.RESERVED, laptop.getCondition());
+    }
+
+    @Test
+    void setYearValidatesRange() throws Exception {
+        Laptop laptop = laptop();
+        assertThrows(InvalidDataException.class, () -> laptop.setYear(1970));
+        assertEquals(2020, laptop.getYear());
+        laptop.setYear(1980);
+        assertEquals(1980, laptop.getYear());
+        Laptop.checkYear(Year.now().getValue());
+        assertThrows(InvalidDataException.class, () -> Laptop.checkYear(1979));
+    }
+
+    @Test
+    void compareToUsesModelThenBrandThenAge() throws Exception {
+        Laptop older = new Laptop("ThinkPad", "Lenovo", LaptopCondition.WORKING, 2018, 100, 8, "i5", 80, "A");
+        Laptop younger = new Laptop("ThinkPad", "Lenovo", LaptopCondition.WORKING, 2020, 100, 8, "i5", 80, "B");
+        Laptop otherBrand = new Laptop("ThinkPad", "Other", LaptopCondition.WORKING, 2018, 100, 8, "i5", 80, "C");
+        Laptop otherModel = new Laptop("Latitude", "Dell", LaptopCondition.WORKING, 2018, 100, 8, "i5", 80, "D");
+        assertTrue(older.compareTo(younger) > 0);
+        assertTrue(younger.compareTo(older) < 0);
+        assertTrue(older.compareTo(otherBrand) < 0);
+        assertTrue(otherModel.compareTo(older) < 0);
+        assertEquals(0, older.compareTo(new Laptop("ThinkPad", "Lenovo", LaptopCondition.DAMAGED, 2018, 5, 8, "i5", 10, "E")));
+    }
+
+    @Test
+    void equalsAndHashCodeIgnorePriceConditionAndSerial() throws Exception {
+        Laptop first = laptop();
+        Laptop same = new Laptop("XPS 13", "Dell", LaptopCondition.DAMAGED, 2020, 1, 8, "inny", 10, "INNY");
+        Laptop differentYear = new Laptop("XPS 13", "Dell", LaptopCondition.WORKING, 2019, 2199, 16, "Intel Core i7", 88, "SN-XPS");
+        assertEquals(first, same);
+        assertEquals(first.hashCode(), same.hashCode());
+        assertEquals(first, first);
+        assertNotEquals(first, differentYear);
+        assertNotEquals(first, null);
+        assertNotEquals(first, "XPS 13");
+        assertFalse(first.equals(new Laptop("Inny", "Dell", LaptopCondition.WORKING, 2020, 1)));
+    }
+
+    @Test
+    void toStringAndPrintDescribeLaptop() throws Exception {
+        Laptop laptop = laptop();
+        assertTrue(laptop.toString().contains("Dell"));
+        assertTrue(laptop.toString().contains("XPS 13"));
+        assertTrue(laptop.toString().contains("Sprawny"));
+        String printed = OutputCapture.stdout(laptop::print);
+        assertTrue(printed.contains("Laptop: Dell XPS 13"));
+        assertTrue(printed.contains("SN-XPS"));
+        assertTrue(printed.contains("Intel Core i7"));
+    }
+
+    @Test
+    void modelKeyIsFoundByModelOnly() {
+        Laptop key = Laptop.modelKey("Latitude 7490");
+        assertEquals("Latitude 7490", key.getModel());
+        assertEquals("", key.getBrand());
+    }
+
+    private static Laptop laptop() throws InvalidPriceException, InvalidDataException {
+        return new Laptop("XPS 13", "Dell", LaptopCondition.WORKING, 2020, 2199,
+                16, "Intel Core i7", 88, "SN-XPS");
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\model\LaptopConditionTest.java
+================================================================================
+package lab3.model;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+@DisplayName("LaptopCondition")
+public class LaptopConditionTest {
+    @Test
+    void polishNamesCoverEveryStateIncludingReserved() {
+        assertEquals(5, LaptopCondition.values().length);
+        assertEquals("Sprawny", LaptopCondition.WORKING.toString());
+        assertEquals("Uszkodzony", LaptopCondition.DAMAGED.toString());
+        assertEquals("W naprawie", LaptopCondition.IN_REPAIR.toString());
+        assertEquals("W trakcie testów", LaptopCondition.IN_TESTING.toString());
+        assertEquals("Zarezerwowany", LaptopCondition.RESERVED.toString());
+        assertEquals(LaptopCondition.RESERVED, LaptopCondition.valueOf("RESERVED"));
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\model\BranchTest.java
+================================================================================
+package lab3.model;
+
+import lab3.exception.BranchFullException;
+import lab3.exception.DuplicateLaptopException;
+import lab3.exception.InvalidDataException;
+import lab3.exception.InvalidPriceException;
+import lab3.exception.LaptopNotFoundException;
+import lab3.support.OutputCapture;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+@DisplayName("Branch")
+public class BranchTest {
+    private Branch branch;
+
+    @BeforeEach
+    void setUp() throws InvalidDataException {
+        branch = new Branch("  Warszawa Centrum  ", 2);
+    }
+
+    @Test
+    void constructorTrimsNameAndRejectsBlankOrNonPositiveCapacity() {
+        assertEquals("Warszawa Centrum", branch.getBranchName());
+        assertEquals(2, branch.getMaxCapacity());
+        assertThrows(InvalidDataException.class, () -> new Branch("  ", 2));
+        assertThrows(InvalidDataException.class, () -> new Branch(null, 2));
+        assertThrows(InvalidDataException.class, () -> new Branch("A", 0));
+        assertThrows(InvalidDataException.class, () -> new Branch("A", -3));
+    }
+
+    @Test
+    void addLaptopStoresItemAndRejectsNullDuplicateAndOverflow() throws Exception {
+        Laptop first = laptop("Alfa", 100);
+        branch.addLaptop(first);
+        assertEquals(1, branch.size());
+        assertEquals(1, branch.getLaptopCount());
+        assertTrue(branch.contains(first));
+        assertFalse(branch.contains(null));
+        assertFalse(branch.isEmpty());
+        assertFalse(branch.isFull());
+        assertEquals(0.5, branch.fillRatio(), 0.001);
+        assertEquals("50.0%", branch.getFillLabel());
+        assertSame(first, branch.getLaptops().get(0));
+
+        assertThrows(InvalidDataException.class, () -> branch.addLaptop(null));
+        Laptop duplicate = new Laptop("Alfa", "Lenovo", LaptopCondition.DAMAGED, 2019, 1);
+        DuplicateLaptopException duplicateError = assertThrows(DuplicateLaptopException.class,
+                () -> branch.addLaptop(duplicate));
+        assertTrue(duplicateError.getMessage().contains("już istnieje"));
+        assertEquals(1, branch.size());
+
+        branch.addLaptop(laptop("Beta", 50));
+        assertTrue(branch.isFull());
+        assertEquals(1.0, branch.fillRatio(), 0.001);
+        BranchFullException full = assertThrows(BranchFullException.class, () -> branch.addLaptop(laptop("Gamma", 10)));
+        assertTrue(full.getMessage().contains("pełny"));
+        assertEquals(2, branch.size());
+    }
+
+    @Test
+    void removeAndSellReturnStoredInstanceOrReportMissing() throws Exception {
+        Laptop stored = laptop("Alfa", 100);
+        branch.addLaptop(stored);
+        Laptop copy = new Laptop("Alfa", "Lenovo", LaptopCondition.DAMAGED, 2019, 5);
+        assertSame(stored, branch.removeLaptop(copy));
+        assertTrue(branch.isEmpty());
+        LaptopNotFoundException missing = assertThrows(LaptopNotFoundException.class, () -> branch.removeLaptop(copy));
+        assertTrue(missing.getMessage().contains("Brak laptopa"));
+        assertThrows(InvalidDataException.class, () -> branch.removeLaptop(null));
+
+        branch.addLaptop(stored);
+        assertSame(stored, branch.sellLaptop(stored));
+        assertThrows(LaptopNotFoundException.class, () -> branch.sellLaptop(stored));
+        assertThrows(InvalidDataException.class, () -> branch.sellLaptop(null));
+        assertEquals(0, branch.totalValue(), 0.001);
+    }
+
+    @Test
+    void changeConditionPriceAndYear() throws Exception {
+        Laptop first = laptop("Alfa", 100);
+        Laptop second = new Laptop("Alfa", "Lenovo", LaptopCondition.WORKING, 2021, 80);
+        branch.addLaptop(first);
+        branch.addLaptop(second);
+
+        branch.changeCondition(new Laptop("Alfa", "Lenovo", LaptopCondition.DAMAGED, 2019, 1), LaptopCondition.IN_REPAIR);
+        assertEquals(LaptopCondition.IN_REPAIR, first.getCondition());
+        assertThrows(InvalidDataException.class, () -> branch.changeCondition(first, null));
+        assertThrows(LaptopNotFoundException.class,
+                () -> branch.changeCondition(laptop("Nie ma", 1), LaptopCondition.WORKING));
+        assertThrows(InvalidDataException.class, () -> branch.changeCondition(null, LaptopCondition.WORKING));
+
+        branch.changePrice(first, 250);
+        assertEquals(250, first.getPrice(), 0.001);
+        assertThrows(InvalidPriceException.class, () -> branch.changePrice(first, -5));
+        assertEquals(250, first.getPrice(), 0.001);
+        assertThrows(LaptopNotFoundException.class, () -> branch.changePrice(laptop("Nie ma", 1), 10));
+        assertThrows(InvalidDataException.class, () -> branch.changePrice(null, 10));
+
+        branch.changeYear(first, 2019);
+        assertEquals(2019, first.getYear());
+        assertThrows(DuplicateLaptopException.class, () -> branch.changeYear(second, 2019));
+        assertEquals(2021, second.getYear());
+        assertThrows(InvalidDataException.class, () -> branch.changeYear(first, 1970));
+        assertEquals(2019, first.getYear());
+        branch.changeYear(first, 2019);
+        assertThrows(LaptopNotFoundException.class, () -> branch.changeYear(laptop("Nie ma", 1), 2020));
+        assertThrows(InvalidDataException.class, () -> branch.changeYear(null, 2020));
+    }
+
+    @Test
+    void countSortSearchSummaryAndMaxDoNotReorderTheShelf() throws Exception {
+        assertEquals(0, branch.countByCondition(null));
+        assertNull(branch.max());
+        assertEquals(0, branch.totalValue(), 0.001);
+        assertNull(branch.search("Alfa"));
+        assertNull(branch.search(null));
+        assertTrue(branch.searchPartial(null).isEmpty());
+        assertTrue(branch.searchPartial("").isEmpty());
+        String emptySummary = OutputCapture.stdout(branch::summary);
+        assertTrue(emptySummary.contains("Brak laptopów."));
+
+        Laptop zeta = new Laptop("Zeta", "Dell", LaptopCondition.DAMAGED, 2018, 300);
+        Laptop alfa = new Laptop("Alfa", "Lenovo", LaptopCondition.WORKING, 2019, 100);
+        branch.addLaptop(zeta);
+        branch.addLaptop(alfa);
+        assertEquals(1, branch.countByCondition(LaptopCondition.WORKING));
+        assertEquals(1, branch.countByCondition(LaptopCondition.DAMAGED));
+        assertEquals(0, branch.countByCondition(LaptopCondition.IN_REPAIR));
+        assertEquals(400, branch.totalValue(), 0.001);
+        assertSame(zeta, branch.max());
+
+        List<Laptop> byName = branch.sortByName();
+        List<Laptop> byPrice = branch.sortByPrice();
+        assertEquals("Alfa", byName.get(0).getModel());
+        assertEquals("Zeta", byName.get(1).getModel());
+        assertEquals(100, byPrice.get(0).getPrice(), 0.001);
+        assertEquals(300, byPrice.get(1).getPrice(), 0.001);
+        assertEquals("Zeta", branch.getLaptops().get(0).getModel());
+        assertEquals("Alfa", branch.getLaptops().get(1).getModel());
+
+        assertSame(alfa, branch.search("Alfa"));
+        assertNull(branch.search("Brak"));
+        assertEquals(1, branch.searchPartial("Len").size());
+        assertEquals(1, branch.searchPartial("Zet").size());
+        assertTrue(branch.searchPartial("xyz").isEmpty());
+
+        Laptop sameModel = new Laptop("Alfa", "HP", LaptopCondition.WORKING, 2020, 10);
+        Branch wider = new Branch("Szukaj", 3);
+        wider.addLaptop(alfa);
+        wider.addLaptop(sameModel);
+        assertEquals("Alfa", wider.search("Alfa").getModel());
+
+        String summary = OutputCapture.stdout(branch::summary);
+        assertTrue(summary.contains("Warszawa Centrum"));
+        assertTrue(summary.contains("Zeta"));
+        assertTrue(summary.contains("400"));
+    }
+
+    private static Laptop laptop(String model, double price) throws InvalidPriceException, InvalidDataException {
+        return new Laptop(model, "Lenovo", LaptopCondition.WORKING, 2019, price);
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\model\StoreManagerTest.java
+================================================================================
+package lab3.model;
+
+import lab3.exception.BranchFullException;
+import lab3.exception.BranchNotFoundException;
+import lab3.exception.DuplicateBranchException;
+import lab3.exception.DuplicateLaptopException;
+import lab3.exception.InvalidDataException;
+import lab3.exception.LaptopNotFoundException;
+import lab3.support.OutputCapture;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+@DisplayName("StoreManager")
+public class StoreManagerTest {
+    private StoreManager manager;
+
+    @BeforeEach
+    void setUp() {
+        manager = new StoreManager();
+    }
+
+    @Test
+    void addBranchTrimsAndRejectsBlankDuplicateAndBadCapacity() throws Exception {
+        Branch branch = manager.addBranch("  Gdańsk  ", 2);
+        assertEquals("Gdańsk", branch.getBranchName());
+        assertSame(branch, manager.getBranch("Gdańsk"));
+        assertSame(branch, manager.getBranch("  Gdańsk "));
+        assertEquals(1, manager.getBranches().size());
+        assertThrows(DuplicateBranchException.class, () -> manager.addBranch("Gdańsk", 9));
+        assertEquals(1, manager.getBranches().size());
+        assertThrows(InvalidDataException.class, () -> manager.addBranch("   ", 2));
+        assertThrows(InvalidDataException.class, () -> manager.addBranch(null, 2));
+        assertThrows(InvalidDataException.class, () -> manager.addBranch("Łódź", 0));
+        assertNull(manager.getBranch("Łódź"));
+        assertNull(manager.getBranch(null));
+    }
+
+    @Test
+    void removeBranchAndFindEmpty() throws Exception {
+        manager.addBranch("Pełny", 1);
+        Branch empty = manager.addBranch("Pusty", 2);
+        manager.getBranch("Pełny").addLaptop(laptop("A", 10));
+        assertEquals(1, manager.findEmpty().size());
+        assertSame(empty, manager.findEmpty().get(0));
+
+        assertSame(empty, manager.removeBranch("  Pusty "));
+        assertNull(manager.getBranch("Pusty"));
+        assertTrue(manager.findEmpty().isEmpty());
+        assertThrows(BranchNotFoundException.class, () -> manager.removeBranch("Pusty"));
+        assertThrows(InvalidDataException.class, () -> manager.removeBranch(null));
+        assertThrows(InvalidDataException.class, () -> manager.removeBranch("  "));
+    }
+
+    @Test
+    void summaryAndTotalValue() throws Exception {
+        String empty = OutputCapture.stdout(manager::summary);
+        assertTrue(empty.contains("Brak oddziałów."));
+        Branch first = manager.addBranch("A", 2);
+        manager.addBranch("B", 2);
+        first.addLaptop(laptop("A", 40));
+        first.addLaptop(laptop("B", 60));
+        assertEquals(100, manager.totalValue(), 0.001);
+        String summary = OutputCapture.stdout(manager::summary);
+        assertTrue(summary.contains("A"));
+        assertTrue(summary.contains("100"));
+        assertTrue(summary.contains("B"));
+    }
+
+    @Test
+    void transferMovesTheSameInstanceAndKeepsSourceOnFailure() throws Exception {
+        Branch source = manager.addBranch("Źródło", 2);
+        Branch destination = manager.addBranch("Cel", 1);
+        Laptop moving = laptop("A", 10);
+        Laptop staying = laptop("B", 20);
+        source.addLaptop(moving);
+        source.addLaptop(staying);
+        destination.addLaptop(laptop("C", 30));
+
+        assertThrows(BranchFullException.class, () -> manager.transferLaptop(moving, "Źródło", "Cel"));
+        assertTrue(source.contains(moving));
+        destination.removeLaptop(destination.getLaptops().get(0));
+
+        manager.transferLaptop(moving, "Źródło", "Cel");
+        assertSame(moving, destination.getLaptops().get(0));
+        assertEquals(1, source.size());
+
+        source.addLaptop(new Laptop("A", "Lenovo", LaptopCondition.DAMAGED, 2019, 1));
+        assertThrows(DuplicateLaptopException.class, () -> manager.transferLaptop(moving, "Cel", "Źródło"));
+        assertTrue(destination.contains(moving));
+        assertThrows(LaptopNotFoundException.class, () -> manager.transferLaptop(staying, "Cel", "Źródło"));
+        assertThrows(InvalidDataException.class, () -> manager.transferLaptop(null, "Źródło", "Cel"));
+        assertThrows(InvalidDataException.class, () -> manager.transferLaptop(staying, "Źródło", "Źródło"));
+        assertThrows(BranchNotFoundException.class, () -> manager.transferLaptop(staying, "Brak", "Cel"));
+        assertThrows(BranchNotFoundException.class, () -> manager.transferLaptop(staying, "Źródło", "Brak"));
+        assertThrows(InvalidDataException.class, () -> manager.transferLaptop(staying, " ", "Cel"));
+        assertThrows(InvalidDataException.class, () -> manager.transferLaptop(staying, "Źródło", null));
+    }
+
+    @Test
+    void sortByCurrentLoadUsesTheSameList() throws Exception {
+        List<Branch> view = manager.getBranches();
+        Branch low = manager.addBranch("B-niski", 4);
+        Branch high = manager.addBranch("A-wysoki", 2);
+        Branch emptyA = manager.addBranch("A-pusty", 3);
+        manager.addBranch("B-pusty", 3);
+        low.addLaptop(laptop("A", 10));
+        high.addLaptop(laptop("B", 10));
+        high.addLaptop(laptop("C", 10));
+
+        manager.sortByCurrentLoad();
+        assertSame(view, manager.getBranches());
+        assertEquals("A-wysoki", view.get(0).getBranchName());
+        assertEquals("B-niski", view.get(1).getBranchName());
+        assertEquals("A-pusty", view.get(2).getBranchName());
+        assertEquals("B-pusty", view.get(3).getBranchName());
+        assertTrue(view.get(0).fillRatio() >= view.get(1).fillRatio());
+    }
+
+    private static Laptop laptop(String model, double price) throws Exception {
+        return new Laptop(model, "Lenovo", LaptopCondition.WORKING, 2019, price);
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\auth\AuthServiceTest.java
+================================================================================
+package lab3.auth;
+
+import lab3.exception.InvalidDataException;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+@DisplayName("AuthService")
+public class AuthServiceTest {
+    @Test
+    void acceptsAdminAndClient() throws InvalidDataException {
+        assertEquals(AuthService.Role.ADMIN, AuthService.authenticate("admin", "admin"));
+        assertEquals(AuthService.Role.ADMIN, AuthService.authenticate("  admin  ", "admin"));
+        assertEquals(AuthService.Role.CLIENT, AuthService.authenticate("klient", "klient"));
+    }
+
+    @Test
+    void rejectsMissingOrWrongCredentials() {
+        assertThrows(InvalidDataException.class, () -> AuthService.authenticate(null, "admin"));
+        assertThrows(InvalidDataException.class, () -> AuthService.authenticate("admin", null));
+        assertThrows(InvalidDataException.class, () -> AuthService.authenticate("admin", "zle"));
+        assertThrows(InvalidDataException.class, () -> AuthService.authenticate("nikt", "admin"));
+        assertThrows(InvalidDataException.class, () -> AuthService.authenticate("admin", "admin "));
+        assertThrows(InvalidDataException.class, () -> AuthService.authenticate("", ""));
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\data\DataGeneratorTest.java
+================================================================================
+package lab3.data;
+
+import lab3.model.Branch;
+import lab3.model.LaptopCondition;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+@DisplayName("DataGenerator")
+public class DataGeneratorTest {
+    @Test
+    void sampleHasBranchesLaptopsConditionsAndAnEmptyBranch() throws Exception {
+        var manager = DataGenerator.createSample();
+        assertEquals(5, manager.getBranches().size());
+        int laptops = 0;
+        Set<String> brands = new HashSet<>();
+        EnumSet<LaptopCondition> conditions = EnumSet.noneOf(LaptopCondition.class);
+        boolean empty = false;
+        boolean full = false;
+        for (Branch branch : manager.getBranches()) {
+            laptops += branch.size();
+            if (branch.isEmpty()) {
+                empty = true;
+                assertEquals("Wrocław Rynek", branch.getBranchName());
+            }
+            if (branch.isFull()) {
+                full = true;
+            }
+            for (var laptop : branch.getLaptops()) {
+                brands.add(laptop.getBrand());
+                conditions.add(laptop.getCondition());
+            }
+        }
+        assertEquals(15, laptops);
+        assertTrue(empty);
+        assertTrue(full);
+        assertEquals(EnumSet.allOf(LaptopCondition.class), conditions);
+        assertTrue(brands.contains("Lenovo"));
+        assertTrue(brands.contains("Dell"));
+        assertTrue(brands.contains("Apple"));
+        assertTrue(brands.contains("HP"));
+        assertTrue(brands.contains("Asus"));
+        assertTrue(brands.contains("Acer"));
+        assertTrue(brands.contains("MSI"));
+    }
+
+    @Test
+    void eachSampleIsIndependent() throws Exception {
+        var first = DataGenerator.createSample();
+        var second = DataGenerator.createSample();
+        assertNotSame(first, second);
+        first.removeBranch("Wrocław Rynek");
+        assertEquals(5, second.getBranches().size());
+    }
+
+    @Test
+    void singletonReturnsTheSameManager() throws Exception {
+        DataGenerator first = DataGenerator.getInstance();
+        DataGenerator second = DataGenerator.getInstance();
+        assertSame(first, second);
+        assertSame(first.getManager(), second.getManager());
+        assertEquals(5, first.getManager().getBranches().size());
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\facade\StoreFacadeTest.java
+================================================================================
+package lab3.facade;
+
+import lab3.data.DataGenerator;
+import lab3.exception.BranchNotFoundException;
+import lab3.exception.DuplicateBranchException;
+import lab3.exception.InvalidDataException;
+import lab3.exception.InvalidPriceException;
+import lab3.exception.LaptopNotFoundException;
+import lab3.model.Branch;
+import lab3.model.Laptop;
+import lab3.model.LaptopCondition;
+import lab3.model.StoreManager;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+@DisplayName("StoreFacade")
+public class StoreFacadeTest {
+    private StoreFacade facade;
+    private Branch warszawa;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        facade = new StoreFacade(DataGenerator.createSample());
+        warszawa = facade.getBranches().get(0);
+    }
+
+    @Test
+    void rejectsMissingManager() {
+        assertThrows(InvalidDataException.class, () -> new StoreFacade(null));
+    }
+
+    @Test
+    void addAndRemoveBranch() throws Exception {
+        int before = facade.getBranches().size();
+        Branch created = facade.addBranch("  Szczecin  ", 2);
+        assertEquals("Szczecin", created.getBranchName());
+        assertEquals(before + 1, facade.getBranches().size());
+        assertThrows(DuplicateBranchException.class, () -> facade.addBranch("Szczecin", 2));
+        facade.removeBranch(created);
+        assertEquals(before, facade.getBranches().size());
+        assertThrows(BranchNotFoundException.class, () -> facade.removeBranch(created));
+        assertThrows(InvalidDataException.class, () -> facade.removeBranch(null));
+        Branch outsider = new Branch("Obcy", 1);
+        assertThrows(BranchNotFoundException.class, () -> facade.removeBranch(outsider));
+    }
+
+    @Test
+    void addAndRemoveLaptop() throws Exception {
+        Branch wroclaw = branch("Wrocław Rynek");
+        assertEquals(0, wroclaw.size());
+        Laptop laptop = new Laptop("TestBook", "Acer", LaptopCondition.WORKING, 2021, 999);
+        assertThrows(InvalidDataException.class, () -> facade.addLaptop(wroclaw, null));
+        assertThrows(InvalidDataException.class, () -> facade.addLaptop(null, laptop));
+        facade.addLaptop(wroclaw, laptop);
+        assertEquals(1, wroclaw.size());
+        facade.removeLaptop(wroclaw, laptop);
+        assertEquals(0, wroclaw.size());
+        assertThrows(LaptopNotFoundException.class, () -> facade.removeLaptop(wroclaw, laptop));
+    }
+
+    @Test
+    void sortKeepsTheSameListAndOrdersByFill() {
+        List<Branch> branches = facade.getBranches();
+        facade.sortBranchesByCurrentLoad();
+        assertSame(branches, facade.getBranches());
+        assertEquals("Kraków Kazimierz", branches.get(0).getBranchName());
+        assertEquals("Warszawa Centrum", branches.get(1).getBranchName());
+        assertEquals("Gdańsk Wrzeszcz", branches.get(2).getBranchName());
+        assertEquals("Poznań Rynek", branches.get(3).getBranchName());
+        assertEquals("Wrocław Rynek", branches.get(4).getBranchName());
+        assertTrue(branches.get(0).fillRatio() >= branches.get(1).fillRatio());
+    }
+
+    @Test
+    void filterByTextAndCondition() throws Exception {
+        assertTrue(facade.filterLaptops(null, "Dell", null).isEmpty());
+        assertEquals(warszawa.size(), facade.filterLaptops(warszawa, null, null).size());
+        assertEquals(warszawa.size(), facade.filterLaptops(warszawa, "   ", null).size());
+
+        List<Laptop> dell = facade.filterLaptops(warszawa, "  dElL ", null);
+        assertEquals(1, dell.size());
+        assertEquals("Dell", dell.get(0).getBrand());
+        assertSame(warszawa.getLaptops().get(1), dell.get(0));
+
+        List<Laptop> think = facade.filterLaptops(warszawa, "thinkpad", null);
+        assertEquals(1, think.size());
+        assertTrue(think.get(0).getModel().contains("ThinkPad"));
+
+        List<Laptop> damaged = facade.filterLaptops(warszawa, null, LaptopCondition.DAMAGED);
+        assertEquals(1, damaged.size());
+        assertEquals(LaptopCondition.DAMAGED, damaged.get(0).getCondition());
+
+        assertTrue(facade.filterLaptops(warszawa, "Dell", LaptopCondition.DAMAGED).isEmpty());
+        assertEquals(1, facade.filterLaptops(warszawa, "HP", LaptopCondition.DAMAGED).size());
+        assertTrue(facade.filterLaptops(warszawa, "nie-ma", null).isEmpty());
+    }
+
+    @Test
+    void reserveOnlyWorkingLaptop() throws Exception {
+        Laptop working = warszawa.getLaptops().get(0);
+        assertEquals(LaptopCondition.WORKING, working.getCondition());
+        facade.reserveLaptop(warszawa, working);
+        assertEquals(LaptopCondition.RESERVED, working.getCondition());
+        assertThrows(InvalidDataException.class, () -> facade.reserveLaptop(warszawa, working));
+
+        Laptop damaged = facade.filterLaptops(warszawa, null, LaptopCondition.DAMAGED).get(0);
+        assertThrows(InvalidDataException.class, () -> facade.reserveLaptop(warszawa, damaged));
+        assertThrows(InvalidDataException.class, () -> facade.reserveLaptop(warszawa, null));
+        assertThrows(InvalidDataException.class, () -> facade.reserveLaptop(null, working));
+        Laptop missing = new Laptop("Brak", "HP", LaptopCondition.WORKING, 2020, 10);
+        assertThrows(LaptopNotFoundException.class, () -> facade.reserveLaptop(warszawa, missing));
+    }
+
+    @Test
+    void changeConditionAndPrice() throws Exception {
+        Laptop laptop = warszawa.getLaptops().get(0);
+        facade.changeCondition(warszawa, laptop, LaptopCondition.IN_TESTING);
+        assertEquals(LaptopCondition.IN_TESTING, laptop.getCondition());
+        facade.changePrice(warszawa, laptop, 3210);
+        assertEquals(3210, laptop.getPrice(), 0.001);
+        assertThrows(InvalidPriceException.class, () -> facade.changePrice(warszawa, laptop, -1));
+        assertEquals(3210, laptop.getPrice(), 0.001);
+        assertThrows(LaptopNotFoundException.class,
+                () -> facade.changePrice(warszawa, new Laptop("Brak", "HP", LaptopCondition.WORKING, 2020, 10), 5));
+    }
+
+    @Test
+    void requestContactStoresSnapshotForAdmin() throws Exception {
+        Laptop laptop = warszawa.getLaptops().get(0);
+        assertTrue(facade.getContactRequests().isEmpty());
+        facade.requestContact(warszawa, laptop, "  Anna Nowak ", "  Proszę o telefon ");
+        assertEquals(1, facade.getContactRequests().size());
+        ContactRequest request = facade.getContactRequests().get(0);
+        assertEquals("Anna Nowak", request.getClientName());
+        assertEquals("Warszawa Centrum", request.getBranchName());
+        assertTrue(request.getLaptopLabel().contains("ThinkPad T480"));
+        assertTrue(request.getLaptopLabel().contains(laptop.getSerialNumber()));
+        assertEquals("Proszę o telefon", request.getMessage());
+        assertThrows(InvalidDataException.class, () -> facade.requestContact(warszawa, laptop, " ", "hej"));
+        assertThrows(InvalidDataException.class, () -> facade.requestContact(warszawa, laptop, "Anna", " "));
+        assertThrows(InvalidDataException.class, () -> facade.requestContact(warszawa, null, "Anna", "hej"));
+        assertThrows(InvalidDataException.class, () -> facade.requestContact(null, laptop, "Anna", "hej"));
+        assertThrows(UnsupportedOperationException.class, () -> facade.getContactRequests().add(request));
+    }
+
+    private Branch branch(String name) {
+        for (Branch candidate : facade.getBranches()) {
+            if (candidate.getBranchName().equals(name)) {
+                return candidate;
+            }
+        }
+        throw new AssertionError(name);
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\ui\GenericTableModelTest.java
+================================================================================
+package lab3.ui;
+
+import lab3.exception.InvalidDataException;
+import lab3.model.Branch;
+import lab3.model.Laptop;
+import lab3.model.LaptopCondition;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+@DisplayName("GenericTable")
+public class GenericTableModelTest {
+    @Test
+    void readsBranchAndLaptopProperties() throws Exception {
+        Branch branch = new Branch("Gdańsk", 2);
+        Laptop laptop = new Laptop("XPS 13", "Dell", LaptopCondition.WORKING, 2020, 2199,
+                16, "i7", 80, "SN-1");
+        branch.addLaptop(laptop);
+        GenericTableModel<Branch> branches = new GenericTableModel<>(
+                Branch.class,
+                List.of(branch),
+                new String[]{"Nazwa", "Zapełnienie"},
+                new String[]{"branchName", "fillLabel"});
+        assertEquals(2, branches.getColumnCount());
+        assertEquals(1, branches.getRowCount());
+        assertEquals("Nazwa", branches.getColumnName(0));
+        assertEquals("Gdańsk", branches.getValueAt(0, 0));
+        assertEquals("50.0%", branches.getValueAt(0, 1));
+        assertFalse(branches.isCellEditable(0, 0));
+        assertEquals(branch, branches.getRow(0));
+
+        GenericTableModel<Laptop> laptops = new GenericTableModel<>(
+                Laptop.class,
+                new ArrayList<>(List.of(laptop)),
+                new String[]{"Model", "Wiek", "Cena"},
+                new String[]{"model", "age", "priceLabel"});
+        assertEquals("XPS 13", laptops.getValueAt(0, 0));
+        assertEquals(laptop.age(), laptops.getValueAt(0, 1));
+        assertEquals("2199.00 zł", laptops.getValueAt(0, 2));
+        laptops.setRows(new ArrayList<>());
+        assertEquals(0, laptops.getRowCount());
+        laptops.setRows(null);
+        assertEquals(0, laptops.getRowCount());
+        laptops.refresh();
+    }
+
+    @Test
+    void rejectsBrokenColumnDefinitions() {
+        assertThrows(InvalidDataException.class,
+                () -> new GenericTableModel<>(Branch.class, List.of(), new String[]{"X"}, new String[]{"brak"}));
+        assertThrows(InvalidDataException.class,
+                () -> new GenericTableModel<>(Branch.class, List.of(), new String[]{"X"}, new String[]{""}));
+        assertThrows(InvalidDataException.class,
+                () -> new GenericTableModel<Branch>(null, List.of(), new String[]{"X"}, new String[]{"branchName"}));
+        assertThrows(InvalidDataException.class,
+                () -> new GenericTableModel<>(Branch.class, List.of(), new String[]{"A", "B"}, new String[]{"branchName"}));
+    }
+
+    @Test
+    void componentSelectsARow() throws Exception {
+        Branch first = new Branch("A", 1);
+        Branch second = new Branch("B", 1);
+        AtomicReference<Branch> selected = new AtomicReference<>();
+        GenericTable<Branch> table = GenericTable.branches(new ArrayList<>(List.of(first, second)));
+        table.onSelection(selected::set);
+        assertNull(table.getSelected());
+        table.selectRow(1);
+        assertEquals(second, table.getSelected());
+        assertEquals(second, selected.get());
+        table.selectRow(-1);
+        assertNull(table.getSelected());
+        table.setRows(List.of(first));
+        assertEquals(1, table.getRowCount());
+        assertEquals("A", table.getModel().getValueAt(0, 0));
+        GenericTable<Laptop> laptops = GenericTable.laptops(new ArrayList<>());
+        assertEquals(0, laptops.getRowCount());
+        assertEquals(10, laptops.getModel().getColumnCount());
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\ui\ParsersTest.java
+================================================================================
+package lab3.ui;
+
+import lab3.exception.InvalidDataException;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+@DisplayName("Parsers")
+public class ParsersTest {
+    @Test
+    void parsesIntegersAndDecimals() throws InvalidDataException {
+        assertEquals(12, Parsers.integer(" 12 ", "Pojemność"));
+        assertEquals(10.5, Parsers.decimal("10.5", "Cena"), 0.001);
+        assertEquals(10.5, Parsers.decimal(" 10,5 ", "Cena"), 0.001);
+    }
+
+    @Test
+    void rejectsBlankAndNonNumericText() {
+        assertThrows(InvalidDataException.class, () -> Parsers.integer(null, "Rok"));
+        assertThrows(InvalidDataException.class, () -> Parsers.integer("  ", "Rok"));
+        assertThrows(InvalidDataException.class, () -> Parsers.integer("dwa", "Rok"));
+        assertThrows(InvalidDataException.class, () -> Parsers.decimal(null, "Cena"));
+        assertThrows(InvalidDataException.class, () -> Parsers.decimal("", "Cena"));
+        assertThrows(InvalidDataException.class, () -> Parsers.decimal("sto", "Cena"));
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\ui\AdminPanelTest.java
+================================================================================
+package lab3.ui;
+
+import lab3.data.DataGenerator;
+import lab3.facade.StoreFacade;
+import lab3.model.Laptop;
+import lab3.model.LaptopCondition;
+import lab3.support.Edt;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+@DisplayName("Panel administratora")
+public class AdminPanelTest {
+    private StoreFacade facade;
+    private AdminPanel panel;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        facade = new StoreFacade(DataGenerator.createSample());
+        Edt.run(() -> panel = new AdminPanel(facade, idle()));
+    }
+
+    @Test
+    void showsLaptopsOfTheSelectedBranchAndSortsByLoad() throws Exception {
+        Edt.run(() -> {
+            assertEquals("Warszawa Centrum", panel.catalog.getSelectedBranch().getBranchName());
+            assertEquals(5, panel.catalog.laptops.getRowCount());
+            panel.sortButton.doClick();
+            assertEquals("Kraków Kazimierz", facade.getBranches().get(0).getBranchName());
+            assertEquals("Kraków Kazimierz", panel.catalog.branches.getRow(0).getBranchName());
+            assertEquals("Warszawa Centrum", panel.catalog.getSelectedBranch().getBranchName());
+        });
+    }
+
+    @Test
+    void filterAndConditionLimitTheLaptopTable() throws Exception {
+        Edt.run(() -> {
+            panel.catalog.filterField.setText("Dell");
+            panel.catalog.filterField.postActionEvent();
+            assertEquals(1, panel.catalog.laptops.getRowCount());
+            assertEquals("Dell", panel.catalog.laptops.getRow(0).getBrand());
+
+            panel.catalog.filterField.setText("");
+            panel.catalog.conditionBox.setSelectedItem(LaptopCondition.DAMAGED);
+            assertEquals(1, panel.catalog.laptops.getRowCount());
+            assertEquals(LaptopCondition.DAMAGED, panel.catalog.laptops.getRow(0).getCondition());
+        });
+    }
+
+    @Test
+    void addsAndRemovesBranchAndLaptopAndEditsPriceAndCondition() throws Exception {
+        Edt.run(() -> {
+            int branches = facade.getBranches().size();
+            panel.addBranch("Szczecin", 2);
+            assertEquals(branches + 1, facade.getBranches().size());
+            assertEquals("Szczecin", panel.catalog.getSelectedBranch().getBranchName());
+            panel.removeSelectedBranch();
+            assertEquals(branches, facade.getBranches().size());
+
+            panel.catalog.selectBranch("Wrocław Rynek");
+            Laptop laptop = new Laptop("TestBook", "Acer", LaptopCondition.WORKING, 2021, 999);
+            panel.addLaptop(laptop);
+            assertEquals(1, panel.catalog.getSelectedBranch().size());
+            panel.catalog.laptops.selectRow(0);
+            assertNotNull(panel.catalog.getSelectedLaptop());
+            panel.removeSelectedLaptop();
+            assertEquals(0, panel.catalog.getSelectedBranch().size());
+
+            panel.catalog.selectBranch("Warszawa Centrum");
+            panel.catalog.laptops.selectRow(0);
+            Laptop warsawLaptop = panel.catalog.getSelectedLaptop();
+            panel.changeSelectedPrice(1300);
+            assertEquals(1300, warsawLaptop.getPrice(), 0.001);
+            panel.catalog.laptops.selectRow(0);
+            panel.changeSelectedCondition(LaptopCondition.IN_REPAIR);
+            assertEquals(LaptopCondition.IN_REPAIR, warsawLaptop.getCondition());
+        });
+    }
+
+    private static Navigator idle() {
+        return new Navigator() {
+            @Override
+            public void showAdmin() {
+            }
+
+            @Override
+            public void showClient() {
+            }
+
+            @Override
+            public void showLogin() {
+            }
+        };
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\ui\ClientPanelTest.java
+================================================================================
+package lab3.ui;
+
+import lab3.data.DataGenerator;
+import lab3.facade.StoreFacade;
+import lab3.model.LaptopCondition;
+import lab3.support.Edt;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+@DisplayName("Panel klienta")
+public class ClientPanelTest {
+    private StoreFacade facade;
+    private ClientPanel panel;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        facade = new StoreFacade(DataGenerator.createSample());
+        Edt.run(() -> panel = new ClientPanel(facade, new Navigator() {
+            @Override
+            public void showAdmin() {
+            }
+
+            @Override
+            public void showClient() {
+            }
+
+            @Override
+            public void showLogin() {
+            }
+        }));
+    }
+
+    @Test
+    void reservesWorkingLaptopSortsAndSavesContactRequest() throws Exception {
+        Edt.run(() -> {
+            panel.catalog.laptops.selectRow(0);
+            assertEquals(LaptopCondition.WORKING, panel.catalog.getSelectedLaptop().getCondition());
+            panel.reserveButton.doClick();
+            assertEquals(LaptopCondition.RESERVED, panel.catalog.getSelectedBranch().getLaptops().get(0).getCondition());
+
+            panel.sortButton.doClick();
+            assertEquals("Kraków Kazimierz", facade.getBranches().get(0).getBranchName());
+
+            panel.catalog.selectBranch("Gdańsk Wrzeszcz");
+            panel.catalog.laptops.selectRow(1);
+            panel.requestContact("Anna Nowak", "Proszę o kontakt w sprawie tego egzemplarza.");
+            assertEquals(1, facade.getContactRequests().size());
+            assertEquals("Anna Nowak", facade.getContactRequests().get(0).getClientName());
+
+            AdminPanel admin = new AdminPanel(facade, new Navigator() {
+                @Override
+                public void showAdmin() {
+                }
+
+                @Override
+                public void showClient() {
+                }
+
+                @Override
+                public void showLogin() {
+                }
+            });
+            assertEquals(1, admin.requests.getRowCount());
+            assertEquals("Anna Nowak", admin.requests.getModel().getValueAt(0, 0));
+        });
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\ui\ApplicationFrameTest.java
+================================================================================
+package lab3.ui;
+
+import lab3.data.DataGenerator;
+import lab3.facade.StoreFacade;
+import lab3.model.LaptopCondition;
+import lab3.support.Edt;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import javax.swing.JButton;
+import java.awt.Component;
+import java.awt.Container;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
+@DisplayName("Aplikacja")
+public class ApplicationFrameTest {
+    @Test
+    void loginSwitchesBetweenAdminAndClient() throws Exception {
+        StoreFacade facade = new StoreFacade(DataGenerator.createSample());
+        Edt.run(() -> {
+            ApplicationFrame frame = new ApplicationFrame(facade);
+            assertEquals("login", frame.visibleCard());
+            assertNotNull(findButton(frame.adminPanel, "add branch"));
+            assertNotNull(findButton(frame.adminPanel, "remove branch"));
+            assertNotNull(findButton(frame.adminPanel, "add new laptop"));
+            assertNotNull(findButton(frame.adminPanel, "remove laptop"));
+            assertNotNull(findButton(frame.adminPanel, "sort branches by current load"));
+            assertNull(findButton(frame.adminPanel, "reserve"));
+            assertNotNull(findButton(frame.clientPanel, "reserve"));
+            assertNotNull(findButton(frame.clientPanel, "request contact"));
+            assertNull(findButton(frame.clientPanel, "add branch"));
+            assertNull(findButton(frame.clientPanel, "remove laptop"));
+
+            frame.loginPanel.username.setText("admin");
+            frame.loginPanel.password.setText("admin");
+            frame.loginPanel.loginButton.doClick();
+            assertEquals("admin", frame.visibleCard());
+            findButton(frame.adminPanel, "Wyloguj").doClick();
+            assertEquals("login", frame.visibleCard());
+            assertEquals("", new String(frame.loginPanel.password.getPassword()));
+
+            frame.loginPanel.username.setText("klient");
+            frame.loginPanel.password.setText("klient");
+            frame.loginPanel.loginButton.doClick();
+            assertEquals("client", frame.visibleCard());
+            frame.clientPanel.catalog.laptops.selectRow(0);
+            frame.clientPanel.reserveButton.doClick();
+            assertEquals(LaptopCondition.RESERVED,
+                    frame.clientPanel.catalog.getSelectedBranch().getLaptops().get(0).getCondition());
+            findButton(frame.clientPanel, "Wyloguj").doClick();
+            assertEquals("login", frame.visibleCard());
+            frame.dispose();
+        });
+    }
+
+    private static JButton findButton(Component root, String text) {
+        if (root instanceof JButton) {
+            JButton button = (JButton) root;
+            if (text.equals(button.getText())) {
+                return button;
+            }
+        }
+        if (root instanceof Container) {
+            Component[] children = ((Container) root).getComponents();
+            for (Component child : children) {
+                JButton found = findButton(child, text);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\suite\ModelTestSuite.java
+================================================================================
+package lab3.suite;
+
+import lab3.exception.ExceptionTest;
+import lab3.model.BranchTest;
+import lab3.model.LaptopConditionTest;
+import lab3.model.LaptopTest;
+import lab3.model.StoreManagerTest;
+import org.junit.platform.suite.api.SelectClasses;
+import org.junit.platform.suite.api.Suite;
+import org.junit.platform.suite.api.SuiteDisplayName;
+
+@Suite
+@SuiteDisplayName("Model i wyjątki")
+@SelectClasses({
+        LaptopTest.class,
+        LaptopConditionTest.class,
+        BranchTest.class,
+        StoreManagerTest.class,
+        ExceptionTest.class
+})
+public class ModelTestSuite {
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\suite\FacadeTestSuite.java
+================================================================================
+package lab3.suite;
+
+import lab3.auth.AuthServiceTest;
+import lab3.data.DataGeneratorTest;
+import lab3.facade.StoreFacadeTest;
+import org.junit.platform.suite.api.SelectClasses;
+import org.junit.platform.suite.api.Suite;
+import org.junit.platform.suite.api.SuiteDisplayName;
+
+@Suite
+@SuiteDisplayName("Fasada, dane i logowanie")
+@SelectClasses({
+        StoreFacadeTest.class,
+        DataGeneratorTest.class,
+        AuthServiceTest.class
+})
+public class FacadeTestSuite {
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\suite\UiTestSuite.java
+================================================================================
+package lab3.suite;
+
+import lab3.ui.AdminPanelTest;
+import lab3.ui.ApplicationFrameTest;
+import lab3.ui.ClientPanelTest;
+import lab3.ui.GenericTableModelTest;
+import lab3.ui.ParsersTest;
+import org.junit.platform.suite.api.SelectClasses;
+import org.junit.platform.suite.api.Suite;
+import org.junit.platform.suite.api.SuiteDisplayName;
+
+@Suite
+@SuiteDisplayName("Interfejs")
+@SelectClasses({
+        GenericTableModelTest.class,
+        ParsersTest.class,
+        AdminPanelTest.class,
+        ClientPanelTest.class,
+        ApplicationFrameTest.class
+})
+public class UiTestSuite {
+}
+
+
+================================================================================
+PLIK: src\test\java\lab3\suite\AllTestSuite.java
+================================================================================
+package lab3.suite;
+
+import org.junit.platform.suite.api.SelectClasses;
+import org.junit.platform.suite.api.Suite;
+import org.junit.platform.suite.api.SuiteDisplayName;
+
+@Suite
+@SuiteDisplayName("Wszystkie testy Lab 3")
+@SelectClasses({
+        ModelTestSuite.class,
+        FacadeTestSuite.class,
+        UiTestSuite.class
+})
+public class AllTestSuite {
+}
+
+
